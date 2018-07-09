@@ -16,6 +16,8 @@ package framework
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -248,6 +250,8 @@ func (f *Framework) BeforeEach() {
 func (f *Framework) AfterEach() {
 	RemoveCleanupAction(f.cleanupHandle)
 
+	printMySQLPodContainerLogs(f)
+
 	nsDeletionErrors := map[string]error{}
 
 	// Whether to delete namespace is determined by 3 factors: delete-namespace flag, delete-namespace-on-failure flag and the test result
@@ -271,4 +275,65 @@ func (f *Framework) AfterEach() {
 		Failf(strings.Join(messages, ","))
 	}
 	f.OperatorInstalled = false
+}
+
+func printMySQLPodContainerLogs(f *Framework) {
+	pods, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).List(metav1.ListOptions{})
+	if err != nil {
+		Logf("Error retrieving pod list in namespace %s: %+v", f.Namespace.Name, err)
+	}
+
+	var opPod v1.Pod
+	var agPods []v1.Pod
+	for _, pod := range pods.Items {
+		if strings.Contains(pod.Spec.Containers[0].Image, "mysql-operator") {
+			opPod = pod
+			continue
+		}
+		if strings.Contains(pod.Spec.Containers[0].Image, "mysql-agent") || strings.Contains(pod.Spec.Containers[0].Image, "mysql-server") {
+			agPods = append(agPods, pod)
+		}
+	}
+
+	// Operator Logs
+	if opPod.Name != "" {
+		printContainerLogs(f, opPod.GetName(), &v1.PodLogOptions{})
+	}
+
+	for _, agPod := range agPods {
+		// Server Logs
+		printContainerLogs(f, agPod.GetName(), &v1.PodLogOptions{Container: "mysql"})
+		// Agent Logs
+		printContainerLogs(f, agPod.GetName(), &v1.PodLogOptions{Container: "mysql-agent"})
+	}
+}
+
+func printLogs(read io.ReadCloser, fileName string) error {
+	defer read.Close()
+	env := os.Getenv("WERCKER_REPORT_ARTIFACTS_DIR")
+	dst := os.Stdout
+	if env != "" {
+		filepath := env + "/" + fileName + ".log"
+		file, err := os.OpenFile(filepath, os.O_WRONLY|os.O_CREATE, 0666)
+		if err != nil {
+			return fmt.Errorf("Error getting file for logs: %+v", err)
+		}
+		dst = file
+		defer dst.Close()
+	}
+	_, err := io.Copy(dst, read)
+	if err != nil {
+		return fmt.Errorf("Error exporting logs: %+v", err)
+	}
+	return nil
+}
+
+func printContainerLogs(f *Framework, podName string, options *v1.PodLogOptions) {
+	podLogs := f.ClientSet.CoreV1().Pods(f.Namespace.Name).GetLogs(podName, options)
+	if podLogs != nil {
+		Logf("Writing %s container logs to file for %s", options.Container, podName)
+		read, _ := podLogs.Stream()
+		printLogs(read, podName)
+		Logf("Finished writing %s container logs for %s", options.Container, podName)
+	}
 }
