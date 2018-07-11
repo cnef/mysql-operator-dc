@@ -17,6 +17,8 @@ package manager
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,7 +38,10 @@ import (
 	"github.com/oracle/mysql-operator/pkg/util/mysqlsh"
 )
 
-const pollingIntervalSeconds = 15
+const (
+	pollingIntervalSeconds = 15
+	defaultDCReplChannel   = "ic_to_dr"
+)
 
 // ClusterManager manages the local MySQL instance's membership of an InnoDB cluster.
 type ClusterManager struct {
@@ -58,14 +63,20 @@ type ClusterManager struct {
 	// primaryCancelFunc cancels the execution of the primary-only controllers.
 	primaryCancelFunc    context.CancelFunc
 	podLabelerController *labeler.ClusterLabelerController
+
+	// ClusterDRHost is the host of dr/dc mysql router
+	clusterDRHost string
+	clusterDRPort int
 }
 
-// NewClusterManager creates a InnoDB cluster ClusterManager.
-func NewClusterManager(
+// newClusterManager creates a InnoDB cluster ClusterManager.
+func newClusterManager(
 	kubeClient kubernetes.Interface,
 	kubeInformerFactory kubeinformers.SharedInformerFactory,
 	mysqlshFactory func(string) mysqlsh.Interface,
 	instance *cluster.Instance,
+	clusterDRHost string,
+	clusterDRPort int,
 ) *ClusterManager {
 	manager := &ClusterManager{
 		kubeClient:          kubeClient,
@@ -73,6 +84,8 @@ func NewClusterManager(
 		mysqlshFactory:      mysqlshFactory,
 		Instance:            instance,
 		localMySh:           mysqlshFactory(instance.GetShellURI()),
+		clusterDRHost:       clusterDRHost,
+		clusterDRPort:       clusterDRPort,
 	}
 	return manager
 }
@@ -85,11 +98,24 @@ func NewLocalClusterManger(kubeclient kubernetes.Interface, kubeInformerFactory 
 		return nil, errors.Wrap(err, "failed to get local MySQL instance")
 	}
 
-	return NewClusterManager(
+	host := os.Getenv("ClusterDRHost")
+	fields := strings.Split(host, ":")
+	if len(fields) != 2 {
+		return nil, fmt.Errorf("wrong ClusterDRHost env")
+	}
+	clusterDRHost := fields[0]
+	clusterDRPort, err := strconv.Atoi(fields[1])
+	if err != nil {
+		return nil, fmt.Errorf("wrong ClusterDRHost env")
+	}
+
+	return newClusterManager(
 		kubeclient,
 		kubeInformerFactory,
 		func(uri string) mysqlsh.Interface { return mysqlsh.New(utilexec.New(), uri) },
 		instance,
+		clusterDRHost,
+		clusterDRPort,
 	), nil
 }
 
@@ -194,8 +220,10 @@ func (m *ClusterManager) Sync(ctx context.Context) bool {
 
 	if online && !m.Instance.MultiMaster {
 		m.ensurePrimaryControllerState(ctx, clusterStatus)
-	}
 
+		// for dual DC
+		m.ensureClusterDRReplication(ctx, clusterStatus)
+	}
 	return online
 }
 
@@ -342,6 +370,63 @@ func (m *ClusterManager) rebootFromOutage(ctx context.Context) (*innodb.ClusterS
 		return nil, errors.Wrap(err, "getting cluster status")
 	}
 	return status, nil
+}
+
+func (m *ClusterManager) ensureClusterDRReplication(
+	ctx context.Context,
+	status *innodb.ClusterStatus,
+) error {
+	if m.Instance.MultiMaster {
+		return fmt.Errorf("can't be called in multi-master mode")
+	}
+
+	// get info about innodb-cluster
+	primaryAddr, err := status.GetPrimaryAddr()
+	if err != nil {
+		return err
+	}
+	selfAddr := m.Instance.GetAddr()
+
+	if selfAddr == primaryAddr {
+		// if instance is primary, turn on slave replication
+		replOK, err := m.localMySh.GetDualDCReplicationStatus(ctx)
+		if err != nil {
+			glog.V(4).Infof("GetDualDCReplicationStatus fail: %v", err)
+			return err
+		}
+		if replOK {
+			glog.V(4).Infof("dc replication have turn on")
+			return nil
+		}
+
+		err = m.localMySh.StartDualDCReplication(ctx,
+			m.clusterDRHost,
+			m.clusterDRPort,
+			m.Instance.GetPassword(),
+			defaultDCReplChannel,
+		)
+		if err != nil {
+			glog.V(4).Infof("StartDualDCReplication fail: %v", err)
+			return err
+		}
+	} else {
+		// if instance is slave, turn off slave replication
+		replOK, err := m.localMySh.GetDualDCReplicationStatus(ctx)
+		if err != nil {
+			glog.V(4).Infof("GetDualDCReplicationStatus fail: %v", err)
+			return err
+		}
+		if !replOK {
+			glog.V(4).Infof("dc replication have turned off")
+			return nil
+		}
+		err = m.localMySh.StopDualDCReplication(ctx, defaultDCReplChannel)
+		if err != nil {
+			glog.V(4).Infof("StopDualDCReplication fail: %v", err)
+			return err
+		}
+	}
+	return nil
 }
 
 // Run runs the ClusterManager controller.

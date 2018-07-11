@@ -122,6 +122,13 @@ func multiMasterEnvVar(enabled bool) v1.EnvVar {
 	}
 }
 
+func clusterDRHostEnvVar(host string) v1.EnvVar {
+	return v1.EnvVar{
+		Name:  "MYSQL_CLUSTER_DR_HOST",
+		Value: host,
+	}
+}
+
 // Returns the MySQL_ROOT_PASSWORD environment variable
 // If a user specifies a secret in the spec we use that
 // else we create a secret with a random password
@@ -251,6 +258,7 @@ func mysqlAgentContainer(cluster *v1alpha1.Cluster, mysqlAgentImage string, root
 			serviceNameEnvVar(serviceName),
 			replicationGroupSeedsEnvVar(replicationGroupSeeds),
 			multiMasterEnvVar(cluster.Spec.MultiMaster),
+			clusterDRHostEnvVar(cluster.Spec.ClusterDRHost),
 			rootPassword,
 			{
 				Name: "MY_POD_IP",

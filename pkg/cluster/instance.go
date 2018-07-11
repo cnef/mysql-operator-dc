@@ -117,6 +117,11 @@ func (i *Instance) GetShellURI() string {
 	return fmt.Sprintf("%s:%s@%s:%d", i.GetUser(), i.GetPassword(), i.Name(), i.Port)
 }
 
+// GetAddr returns the addr of the instance
+func (i *Instance) GetAddr() string {
+	return fmt.Sprintf("%s:%d", i.Name(), i.Port)
+}
+
 // Name returns the name of the instance.
 func (i *Instance) Name() string {
 	return fmt.Sprintf("%s.%s", i.PodName(), i.ParentName)
@@ -133,7 +138,8 @@ func (i *Instance) WhitelistCIDR() (string, error) {
 	case 10:
 		return "10.0.0.0/8", nil
 	case 172:
-		return "172.16.0.0/12", nil
+		//return "172.16.0.0/12", nil
+		return "172.0.0.0/8", nil
 	case 192:
 		return "192.168.0.0/16", nil
 	default:

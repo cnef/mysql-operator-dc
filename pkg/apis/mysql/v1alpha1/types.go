@@ -64,6 +64,10 @@ type ClusterSpec struct {
 	// and server key for group replication SSL.
 	// +optional
 	SSLSecret *corev1.LocalObjectReference `json:"sslSecret,omitempty"`
+	// OtherSideClusterHost allows deploy a mysql-cluster in Dual-DC
+	// if it is not set we create a mysql-cluster in One-DC
+	// +optional
+	ClusterDRHost string `json:"clusterDRHost,omitempty"`
 }
 
 // ClusterConditionType represents a valid condition of a Cluster.
