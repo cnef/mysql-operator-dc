@@ -98,7 +98,7 @@ func NewLocalClusterManger(kubeclient kubernetes.Interface, kubeInformerFactory 
 		return nil, errors.Wrap(err, "failed to get local MySQL instance")
 	}
 
-	host := os.Getenv("ClusterDRHost")
+	host := os.Getenv("MYSQL_CLUSTER_DR_HOST")
 	fields := strings.Split(host, ":")
 	if len(fields) != 2 {
 		return nil, fmt.Errorf("wrong ClusterDRHost env")
