@@ -1,0 +1,21 @@
+---
+apiVersion: mysql.oracle.com/v1alpha1
+kind: Cluster
+metadata:
+  name: mysql-cluster 
+spec:
+  version: "8.0.11"
+  members: 3
+  baseServerId: 2000
+  rootPasswordSecret:
+    name: mysql-root-user-secret
+  volumeClaimTemplate:
+    metadata:
+      name: data
+    spec:
+      storageClassName: mysql-local-storage
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 10Gi

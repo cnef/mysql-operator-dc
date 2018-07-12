@@ -1,0 +1,32 @@
+apiVersion: apps/v1beta1
+kind: Deployment
+metadata:
+  name: mysql-operator
+  namespace: mysql-operator
+  labels:
+    release: 0.1.0
+    app: mysql-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql-operator
+  template:
+    metadata:
+      labels:
+        app: mysql-operator
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      serviceAccountName: mysql-operator
+      containers:
+      - name: mysql-operator-controller
+        imagePullPolicy: Always
+        image: 10.5.6.10/mysql/mysql-operator:fca0915b-2018070420
+        ports:
+        - containerPort: 10254
+        args:
+          - --v=4
+          - --mysql-agent-image=10.5.6.10/mysql/mysql-agent
+          - --mysql-server-image=10.5.6.10/mysql/mysql-server
