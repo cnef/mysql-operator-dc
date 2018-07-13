@@ -173,6 +173,11 @@ func (m *ClusterManager) Sync(ctx context.Context) bool {
 	// most up to date information.
 	cluster.SetStatus(clusterStatus)
 
+	if clusterStatus.DefaultReplicaSet.Status == innodb.ReplicaSetStatusNoQuorum {
+		glog.V(4).Info("Cluster as seen from this instance is in NO_QUORUM state")
+		metrics.IncEventCounter(clusterNoQuorumCount)
+	}
+
 	online := false
 	instanceStatus := clusterStatus.GetInstanceStatus(m.Instance.Name())
 	switch instanceStatus {
@@ -212,6 +217,9 @@ func (m *ClusterManager) Sync(ctx context.Context) bool {
 		} else {
 			metrics.IncEventCounter(instanceAddErrorCount)
 		}
+
+	case innodb.InstanceStatusUnreachable:
+		metrics.IncStatusCounter(instanceStatusCount, innodb.InstanceStatusUnreachable)
 
 	default:
 		metrics.IncStatusCounter(instanceStatusCount, innodb.InstanceStatusUnknown)
