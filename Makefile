@@ -20,7 +20,7 @@ else
     COMMIT := $(shell git rev-parse --short HEAD)
     #VERSION ?= ${USER}-$(shell git describe --always --dirty)
     TENANT ?= "spinnaker"
-    VERSION := ${COMMIT}-$(shell date +%Y%m%d%H)
+    VERSION := ${COMMIT}-$(shell date +%Y%m%d%H%M)
 endif
 
 PKG             := github.com/oracle/mysql-operator
