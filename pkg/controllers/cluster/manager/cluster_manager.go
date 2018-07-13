@@ -100,13 +100,14 @@ func NewLocalClusterManger(kubeclient kubernetes.Interface, kubeInformerFactory 
 
 	host := os.Getenv("MYSQL_CLUSTER_DR_HOST")
 	fields := strings.Split(host, ":")
-	if len(fields) != 2 {
-		return nil, fmt.Errorf("wrong ClusterDRHost env")
-	}
-	clusterDRHost := fields[0]
-	clusterDRPort, err := strconv.Atoi(fields[1])
-	if err != nil {
-		return nil, fmt.Errorf("wrong ClusterDRHost env")
+	var clusterDRHost string
+	var clusterDRPort int
+	if len(fields) == 2 {
+		clusterDRHost = fields[0]
+		clusterDRPort, err = strconv.Atoi(fields[1])
+		if err != nil {
+			return nil, fmt.Errorf("wrong ClusterDRHost env")
+		}
 	}
 
 	return newClusterManager(
@@ -228,7 +229,8 @@ func (m *ClusterManager) Sync(ctx context.Context) bool {
 
 	if online && !m.Instance.MultiMaster {
 		m.ensurePrimaryControllerState(ctx, clusterStatus)
-
+	}
+	if !m.Instance.MultiMaster {
 		// for dual DC
 		m.ensureClusterDRReplication(ctx, clusterStatus)
 	}
@@ -380,23 +382,36 @@ func (m *ClusterManager) rebootFromOutage(ctx context.Context) (*innodb.ClusterS
 	return status, nil
 }
 
+func (m *ClusterManager) needTurnOnDRReplication(status *innodb.ClusterStatus) (bool, error) {
+	// get info about innodb-cluster
+	primaryAddr, err := status.GetPrimaryAddr()
+	if err != nil {
+		return false, err
+	}
+	selfAddr := m.Instance.GetAddr()
+
+	if selfAddr == primaryAddr && m.clusterDRHost != "" && m.clusterDRPort != 0 {
+		return true, nil
+	}
+	return false, nil
+}
+
 func (m *ClusterManager) ensureClusterDRReplication(
 	ctx context.Context,
 	status *innodb.ClusterStatus,
 ) error {
 	if m.Instance.MultiMaster {
+		// only used in single-master mode
 		return fmt.Errorf("can't be called in multi-master mode")
 	}
 
-	// get info about innodb-cluster
-	primaryAddr, err := status.GetPrimaryAddr()
+	ok, err := m.needTurnOnDRReplication(status)
 	if err != nil {
 		return err
 	}
-	selfAddr := m.Instance.GetAddr()
 
-	if selfAddr == primaryAddr {
-		// if instance is primary, turn on slave replication
+	if ok {
+		// if instance is primary and DR cluster exist, turn on slave replication
 		replOK, err := m.localMySh.GetDualDCReplicationStatus(ctx)
 		if err != nil {
 			glog.V(4).Infof("GetDualDCReplicationStatus fail: %v", err)
@@ -418,7 +433,7 @@ func (m *ClusterManager) ensureClusterDRReplication(
 			return err
 		}
 	} else {
-		// if instance is slave, turn off slave replication
+		// else, turn off slave replication
 		replOK, err := m.localMySh.GetDualDCReplicationStatus(ctx)
 		if err != nil {
 			glog.V(4).Infof("GetDualDCReplicationStatus fail: %v", err)
