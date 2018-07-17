@@ -37,6 +37,7 @@ import (
 	backupcontroller "github.com/oracle/mysql-operator/pkg/controllers/backup"
 	clustermgr "github.com/oracle/mysql-operator/pkg/controllers/cluster/manager"
 	restorecontroller "github.com/oracle/mysql-operator/pkg/controllers/restore"
+	"github.com/oracle/mysql-operator/pkg/dr_replication"
 	clientset "github.com/oracle/mysql-operator/pkg/generated/clientset/versioned"
 	informers "github.com/oracle/mysql-operator/pkg/generated/informers/externalversions"
 	metrics "github.com/oracle/mysql-operator/pkg/util/metrics"
@@ -75,6 +76,14 @@ func Run(opts *options.MySQLAgentOpts) error {
 	}
 	health := healthcheck.NewHandler()
 	health.AddReadinessCheck("node-in-cluster", checkInCluster)
+
+	// Set up DR-health-check
+	drChecker, err := drrepl.NewDRHealthCheck()
+	if err != nil {
+		glog.V(6).Infoln(err)
+	} else {
+		health.AddReadinessCheck("dr-in-cluster-master", drChecker)
+	}
 	go func() {
 		glog.Fatal(http.ListenAndServe(
 			net.JoinHostPort(opts.Address, strconv.Itoa(int(opts.HealthcheckPort))),

@@ -110,6 +110,8 @@ SELF_REGISTRY := "10.5.6.10/mysql"
 image:
 	@docker build --build-arg=http_proxy --build-arg=https_proxy -t ${SELF_REGISTRY}/mysql-operator:${VERSION} -f docker/mysql-operator/Dockerfile .
 	@docker build --build-arg=http_proxy --build-arg=https_proxy -t ${SELF_REGISTRY}/mysql-agent:${VERSION} -f docker/mysql-agent/Dockerfile .
+	@docker push ${SELF_REGISTRY}/mysql-operator:${VERSION}
+	@docker push ${SELF_REGISTRY}/mysql-agent:${VERSION}
 
 .PHONY: run-dev
 run-dev:

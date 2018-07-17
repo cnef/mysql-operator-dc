@@ -22,6 +22,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oracle/mysql-operator/pkg/dr_replication"
+
 	"github.com/golang/glog"
 	"github.com/pkg/errors"
 
@@ -405,51 +407,54 @@ func (m *ClusterManager) ensureClusterDRReplication(
 		return fmt.Errorf("can't be called in multi-master mode")
 	}
 
-	ok, err := m.needTurnOnDRReplication(status)
+	needDRRepl, err := m.needTurnOnDRReplication(status)
 	if err != nil {
 		return err
 	}
+	replStatus, err := m.localMySh.GetDualDCReplicationStatus(ctx)
+	if err != nil {
+		glog.V(4).Infof("GetDualDCReplicationStatus fail: %v", err)
+		return err
+	}
+	// set dr replication status
+	drrepl.SetDRStatus(&drrepl.DRRepcliationStatus{
+		NeedDRRepl: needDRRepl,
+		Status:     replStatus.IsON(),
+		Reason:     replStatus,
+	})
 
-	if ok {
+	if needDRRepl {
 		// if instance is primary and DR cluster exist, turn on slave replication
-		replOK, err := m.localMySh.GetDualDCReplicationStatus(ctx)
-		if err != nil {
-			glog.V(4).Infof("GetDualDCReplicationStatus fail: %v", err)
-			return err
-		}
-		if replOK {
+		if replStatus.IsON() {
+			// if replication ON, return
 			glog.V(4).Infof("dc replication have turn on")
 			return nil
 		}
-
-		err = m.localMySh.StartDualDCReplication(ctx,
-			m.clusterDRHost,
-			m.clusterDRPort,
-			m.Instance.GetPassword(),
-			defaultDCReplChannel,
-		)
-		if err != nil {
-			glog.V(4).Infof("StartDualDCReplication fail: %v", err)
-			return err
+		if replStatus.IsOFF() {
+			// if replication OFF, create channel
+			err = m.localMySh.CreateDCReplChannel(ctx,
+				m.clusterDRHost,
+				m.clusterDRPort,
+				m.Instance.GetPassword(),
+				defaultDCReplChannel,
+			)
+			if err != nil {
+				glog.V(4).Infof("StartDualDCReplication fail: %v", err)
+				return err
+			}
 		}
-	} else {
-		// else, turn off slave replication
-		replOK, err := m.localMySh.GetDualDCReplicationStatus(ctx)
-		if err != nil {
-			glog.V(4).Infof("GetDualDCReplicationStatus fail: %v", err)
-			return err
-		}
-		if !replOK {
-			glog.V(4).Infof("dc replication have turned off")
-			return nil
-		}
-		err = m.localMySh.StopDualDCReplication(ctx, defaultDCReplChannel)
-		if err != nil {
-			glog.V(4).Infof("StopDualDCReplication fail: %v", err)
-			return err
-		}
+		return m.localMySh.StartDualDCReplication(ctx, defaultDCReplChannel)
 	}
-	return nil
+	// else, turn off slave replication
+	if replStatus.IsOFF() {
+		glog.V(4).Infof("dc replication have turned off")
+		return nil
+	}
+	err = m.localMySh.StopDualDCReplication(ctx, defaultDCReplChannel)
+	if err != nil {
+		glog.V(4).Infof("StopDualDCReplication fail: %v", err)
+	}
+	return err
 }
 
 // Run runs the ClusterManager controller.
