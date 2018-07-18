@@ -48,3 +48,5 @@ kubectl create -f cluster-with-3-replicas.yaml
 ```
 kubectl create -f cluster-router.yaml
 ```
+
+8. 如果需要DR的话，则在另外个集群重复上面步骤即可
