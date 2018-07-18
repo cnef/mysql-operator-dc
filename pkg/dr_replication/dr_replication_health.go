@@ -5,6 +5,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/golang/glog"
 	"github.com/heptiolabs/healthcheck"
 )
 
@@ -86,12 +87,10 @@ func NewDRHealthCheck() (healthcheck.Check, error) {
 	return func() error {
 		s := GetDRStatus()
 		if s == nil {
-			if s.NeedDRRepl {
-				return fmt.Errorf("cluster-master without DR-replication")
-			}
 			return nil
 		}
 		if s.NeedDRRepl && !s.Status {
+			glog.Errorf("DR-replication fail:%v", s.Reason)
 			return fmt.Errorf("DR-replication fail:%v", s.Reason)
 		}
 		return nil
