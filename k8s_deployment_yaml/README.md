@@ -1,4 +1,17 @@
 ### 操作步骤
+0. modify yaml
+    * cluster-with-3-replicas.yaml
+        * 如果需要DR，则填写clusterDRHost字段，字段为DC端的router-service-host
+        * 修改baseServerId。DC和DR的baseServerId不能重复且[baseServerId, baseServerId+members]不能重叠
+        * 注意调整volumeClaimTemplate中的storage大小
+    * pv*.yaml
+        * 现在使用的是手动创建pv的方式，注意在nodes上预先创建spec.local.path
+        * 注意修改spec.nodeAffinity.required.nodeSelectorTerm.values为pv需要安放的node节点IP
+    * cluster-router.yaml
+        * spec.image修改为集群可访问到的registry
+    * operator/03-deployment.yaml
+        * spec.template.spec.containers.image修改为mysql-operator在registry里面的imageID   
+
 1. create pv
 ```
 kubectl create -f pv0.yaml
