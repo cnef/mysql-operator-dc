@@ -15,8 +15,10 @@ kind: Restore
 metadata:
   name: example-restore
 spec:
-  clusterRef:
+  cluster:
     name: mycluster
-  backupRef:
+  backup:
     name: mysql-backup
 ```
+
+
