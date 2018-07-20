@@ -1,0 +1,19 @@
+apiVersion: mysql.oracle.com/v1alpha1
+kind: Backup
+metadata:
+  name: mysql-backup-v2
+spec:
+  executor:
+    mysqldump:
+      databases:
+        - name: test
+  storageProvider:
+    s3:
+      endpoint: http://minio-default.component:9000 
+      region:   'us-east-1' 
+      bucket:   business-mysql-backup 
+      forcePathStyle: true
+      credentialsSecret:
+          name: mysql-backup-minio-credentials
+  cluster:
+    name: mysql-cluster

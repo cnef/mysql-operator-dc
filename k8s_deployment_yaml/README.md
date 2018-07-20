@@ -1,4 +1,7 @@
 ### 操作步骤
+
+#### Deploy mysql cluster
+```
 0. modify yaml
     * cluster-with-3-replicas.yaml
         * 如果需要DR，则填写clusterDRHost字段，字段为DC端的router-service-host
@@ -13,40 +16,49 @@
         * spec.template.spec.containers.image修改为mysql-operator在registry里面的imageID   
 
 1. create pv
-```
 kubectl create -f pv0.yaml
 kubectl create -f pv1.yaml
 kubectl create -f pv2.yaml
-```
 
 2. create namespace
-```
 kubectl create -f 00-namespace.yaml
-```
 
 3. create crd
-```
 kubectl create -f 01-resources.yaml
-```
 
 4. create rbac
-```
 kubectl create -f 02-rbac.yaml
-```
 
 5. create mysql-oprator
-```
 kubectl create -f 03-deployment.yaml
-```
 
 6. create mysql-cluster
-```
 kubectl create -f cluster-with-3-replicas.yaml
-```
 
 7. create router
-```
 kubectl create -f cluster-router.yaml
-```
 
 8. 如果需要DR的话，则在另外个集群重复上面步骤即可
+```
+
+#### backup mysql
+```
+0. modify mysql-on-demand-backup.yaml
+    * spec.storageProvider.s3.endpoint　minio服务端
+    * spec.storageProvider.s3.bucket　存储备份的桶
+    * spec.storageProvider.s3.credentialsSecret minio的验证信息
+
+1. kubectl create -f mysql-on-demand-backup.yaml
+```
+
+#### restore mysql
+```
+0. modify mysql-on-demand-restore.yaml
+    * spec.cluster　修改为集群名称
+    * spec.backup　修改为backup的名称
+
+1. kubectl create -f mysql-on-demand-restore.yaml
+```
+
+#### TODO
+自动化脚本
