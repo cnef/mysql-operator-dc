@@ -192,6 +192,10 @@ func mysqlServerContainer(cluster *v1alpha1.Cluster, mysqlServerImage string, ro
 
 	entryPointArgs := strings.Join(args, " ")
 
+	privileged := false
+	if cluster.Spec.Privileged {
+		privileged = true
+	}
 	cmd := fmt.Sprintf(`
          # Set baseServerID
          base=%d
@@ -221,6 +225,10 @@ func mysqlServerContainer(cluster *v1alpha1.Cluster, mysqlServerImage string, ro
 				Name:  "MYSQL_LOG_CONSOLE",
 				Value: "true",
 			},
+		},
+		// enable privilege to use route debug network-partition
+		SecurityContext: &v1.SecurityContext{
+			Privileged: &privileged,
 		},
 	}
 }

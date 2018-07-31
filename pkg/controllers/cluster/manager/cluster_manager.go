@@ -153,6 +153,8 @@ func (m *ClusterManager) Sync(ctx context.Context) bool {
 		myshErr, ok := errors.Cause(err).(*mysqlsh.Error)
 		if !ok {
 			glog.Errorf("Failed to get the cluster status: %+v", err)
+			// can't get cluster status, need update agent-health-checking
+			cluster.SetStatus(nil)
 			return false
 		}
 

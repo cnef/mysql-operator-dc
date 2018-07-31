@@ -65,9 +65,12 @@ type ClusterSpec struct {
 	// +optional
 	SSLSecret *corev1.LocalObjectReference `json:"sslSecret,omitempty"`
 	// ClusterDRHost allows deploy a mysql-cluster in Dual-DC
-	// if it is not set we create a mysql-cluster in One-DC
+	// if it is not set, we create a mysql-cluster in Single-DC
 	// +optional
 	ClusterDRHost string `json:"clusterDRHost,omitempty"`
+	// Privileged Mode for pod container, if true, we could use route to simulate network-partition
+	// +optional
+	Privileged bool `json:"privileged,omitempty"`
 }
 
 // ClusterConditionType represents a valid condition of a Cluster.
