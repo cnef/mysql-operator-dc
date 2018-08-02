@@ -35,7 +35,10 @@ import (
 
 var errNoClusterFound = errors.New("no cluster found on any of the seed nodes")
 
-const defaultTimeout = 10 * time.Second
+const (
+	defaultTimeout  = 10 * time.Second
+	eachSeedTimeout = 4 * time.Second
+)
 
 // isDatabaseRunning returns true if a connection can be made to the MySQL
 // database running in the pod instance in which this function is called.
@@ -102,9 +105,12 @@ func getClusterStatusFromGroupSeeds(ctx context.Context, kubeclient kubernetes.I
 		}
 		if i == 0 || podExists(kubeclient, inst) {
 			msh := mysqlsh.New(utilexec.New(), inst.GetShellURI())
+			ctx, cancel := context.WithTimeout(ctx, eachSeedTimeout)
 			if !msh.IsClustered(ctx) {
+				cancel()
 				continue
 			}
+			defer cancel()
 			return msh.GetClusterStatus(ctx)
 		}
 	}
