@@ -20,25 +20,28 @@ kubectl create -f pv0.yaml
 kubectl create -f pv1.yaml
 kubectl create -f pv2.yaml
 
-2. create namespace
+2. create configmap
+kubectl create configmap mycnf --from-file=my.cnf
+
+3. create namespace
 kubectl create -f 00-namespace.yaml
 
-3. create crd
+4. create crd
 kubectl create -f 01-resources.yaml
 
-4. create rbac
+5. create rbac
 kubectl create -f 02-rbac.yaml
 
-5. create mysql-oprator
+6. create mysql-oprator
 kubectl create -f 03-deployment.yaml
 
-6. create mysql-cluster
+7. create mysql-cluster
 kubectl create -f cluster-with-3-replicas.yaml
 
-7. create router
+8. create router
 kubectl create -f cluster-router.yaml
 
-8. 如果需要DR的话，则在另外个集群重复上面步骤即可
+9. 如果需要DR的话，则在另外个集群重复上面步骤即可
 ```
 
 #### backup mysql
