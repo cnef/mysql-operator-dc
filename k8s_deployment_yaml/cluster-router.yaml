@@ -2,9 +2,9 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: test-router
+  name: mysql-router
   labels:
-    app: test-router
+    app: mysql-router
 spec:
   ports:
   - port: 6446
@@ -16,39 +16,42 @@ spec:
     protocol: TCP
     name: port6447
   selector:
-    app: test-router
+    app: mysql-router
   type: NodePort
 ---
 apiVersion: extensions/v1beta1
 kind: Deployment
 metadata:
-  name: test-router
+  name: mysql-router
   labels:
-    app: test-router
+    app: mysql-router
 spec:
+  replicas: 3
   strategy:
     type: Recreate
   template:
     metadata:
       labels:
-        app: test-router
+        app: mysql-router
     spec:
       containers:
       - name: mysqlrouter
-        image: 10.5.6.10/mysql/mysql-router:8.0.11 
+        image: mysql/mysql-router:8.0.11
         env:
-        - name: MYSQL_ROOT_PASSWORD
-          value: l3iL5HljvN1qbZFQ
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-root-user-secret
+              key: password
+        - name: MYSQL_USER
+          value: root
+        - name: MYSQL_PORT
+          value: "3306"
+        - name: MYSQL_HOST
+          value: mysql-cluster-0.mysql-cluster
+        - name: MYSQL_INNODB_NUM_MEMBERS
+          value: "3"
         command:
         - "/bin/bash"
         - "-cx"
-        - |
-          echo "Bootstraping the router"
-          echo $MYSQL_ROOT_PASSWORD | mysqlrouter --bootstrap mysql-cluster-0.mysql-cluster:3306 --user=root
-
-          echo "Updating resolv.conf"
-          search=$(grep ^search /etc/resolv.conf)
-          echo "$search mysql-cluster.default.svc.cluster.local" >> /etc/resolv.conf
-
-          echo "Running the router"
-          mysqlrouter --user=root
+        - "exec /run.sh mysqlrouter"
