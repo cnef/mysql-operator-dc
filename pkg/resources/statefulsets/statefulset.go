@@ -181,6 +181,7 @@ func mysqlServerContainer(cluster *v1alpha1.Cluster, mysqlServerImage string, ro
 		fmt.Sprintf("--relay-log=%s-${index}-relay-bin", cluster.Name),
 		fmt.Sprintf("--report-host=\"%[1]s-${index}.%[1]s\"", cluster.Name),
 		"--log-error-verbosity=3",
+		"--group-replication-communication-debug-options=GCS_DEBUG_ALL",
 	}
 
 	if cluster.RequiresCustomSSLSetup() {
