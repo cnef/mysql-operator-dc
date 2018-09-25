@@ -35,8 +35,9 @@ func SetStatus(new *innodb.ClusterStatus) {
 	defer statusMutex.Unlock()
 	if new == nil {
 		status = nil
+	} else {
+		status = new.DeepCopy()
 	}
-	status = new.DeepCopy()
 }
 
 // GetStatus fetches a copy of the latest cluster status.

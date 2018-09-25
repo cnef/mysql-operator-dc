@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
+	"github.com/golang/glog"
 	agentopts "github.com/oracle/mysql-operator/cmd/mysql-agent/app/options"
 	operatoropts "github.com/oracle/mysql-operator/cmd/mysql-operator/app/options"
 	"github.com/oracle/mysql-operator/pkg/apis/mysql/v1alpha1"
@@ -181,7 +182,7 @@ func mysqlServerContainer(cluster *v1alpha1.Cluster, mysqlServerImage string, ro
 		fmt.Sprintf("--relay-log=%s-${index}-relay-bin", cluster.Name),
 		fmt.Sprintf("--report-host=\"%[1]s-${index}.%[1]s\"", cluster.Name),
 		"--log-error-verbosity=3",
-		"--group-replication-communication-debug-options=GCS_DEBUG_ALL",
+		//"--loose-group-replication-communication-debug-options=GCS_DEBUG_ALL",
 	}
 
 	if cluster.RequiresCustomSSLSetup() {
@@ -226,6 +227,14 @@ func mysqlServerContainer(cluster *v1alpha1.Cluster, mysqlServerImage string, ro
 				Name:  "MYSQL_LOG_CONSOLE",
 				Value: "true",
 			},
+			{
+				Name: "MY_POD_NAME",
+				ValueFrom: &v1.EnvVarSource{
+					FieldRef: &v1.ObjectFieldSelector{
+						FieldPath: "metadata.name",
+					},
+				},
+			},
 		},
 		// enable privilege to use route debug network-partition
 		SecurityContext: &v1.SecurityContext{
@@ -259,6 +268,14 @@ func mysqlAgentContainer(cluster *v1alpha1.Cluster, mysqlAgentImage string, root
 				ValueFrom: &v1.EnvVarSource{
 					FieldRef: &v1.ObjectFieldSelector{
 						FieldPath: "status.podIP",
+					},
+				},
+			},
+			{
+				Name: "MY_POD_NAME",
+				ValueFrom: &v1.EnvVarSource{
+					FieldRef: &v1.ObjectFieldSelector{
+						FieldPath: "metadata.name",
 					},
 				},
 			},
@@ -358,6 +375,13 @@ func NewForCluster(cluster *v1alpha1.Cluster, images operatoropts.Images, servic
 		podLabels[constants.LabelClusterRole] = constants.ClusterRolePrimary
 	}
 
+	dnsPolicy := v1.DNSClusterFirst
+	if cluster.Spec.HostNetwork {
+		dnsPolicy = v1.DNSClusterFirstWithHostNet
+	}
+	glog.V(4).Infof("create statefulset, hostnetwork: %v, dnspolicy: %v",
+		cluster.Spec.HostNetwork,
+		dnsPolicy)
 	ss := &apps.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: cluster.Namespace,
@@ -393,6 +417,8 @@ func NewForCluster(cluster *v1alpha1.Cluster, images operatoropts.Images, servic
 					Affinity:           cluster.Spec.Affinity,
 					Containers:         containers,
 					Volumes:            podVolumes,
+					HostNetwork:        cluster.Spec.HostNetwork,
+					DNSPolicy:          dnsPolicy,
 				},
 			},
 			ServiceName: serviceName,

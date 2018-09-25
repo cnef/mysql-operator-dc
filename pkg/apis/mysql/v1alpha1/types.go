@@ -71,6 +71,9 @@ type ClusterSpec struct {
 	// Privileged Mode for pod container, if true, we could use route to simulate network-partition
 	// +optional
 	Privileged bool `json:"privileged,omitempty"`
+	// HostNetwork allows pods to use host network
+	// +optional
+	HostNetwork bool `json:"hostNetwork,omitempty"`
 }
 
 // ClusterConditionType represents a valid condition of a Cluster.

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -126,10 +127,12 @@ func (m *ClusterManager) getClusterStatus(ctx context.Context) (*innodb.ClusterS
 	ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
 	defer cancel()
 	clusterStatus, localMSHErr := m.localMySh.GetClusterStatus(ctx)
+	glog.V(4).Infoln("GetClusterStatus, localMSHErr: ", localMSHErr)
 	if localMSHErr != nil {
 		var err error
 		clusterStatus, err = getClusterStatusFromGroupSeeds(ctx, m.kubeClient, m.Instance)
 		if err != nil {
+			glog.V(4).Infof("getClusterStatusFromGroupSeeds, err: %v, localErr: %v", err, localMSHErr)
 			// NOTE: We return the localMSHErr rather than the error here so that we
 			// can dispatch on it.
 			return nil, errors.Wrap(localMSHErr, "getting cluster status from group seeds")
@@ -152,6 +155,7 @@ func (m *ClusterManager) Sync(ctx context.Context) bool {
 	if err != nil {
 		myshErr, ok := errors.Cause(err).(*mysqlsh.Error)
 		if !ok {
+			glog.Errorf("err type: %v", reflect.TypeOf(err))
 			glog.Errorf("Failed to get the cluster status: %+v", err)
 			// can't get cluster status, need update agent-health-checking
 			cluster.SetStatus(nil)
