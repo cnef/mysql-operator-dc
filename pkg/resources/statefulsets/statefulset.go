@@ -184,16 +184,15 @@ func getMysqlServerContainerArgs(cluster *v1alpha1.Cluster) string {
 		"--relay-log-info-repository=TABLE",
 		"--transaction-write-set-extraction=XXHASH64",
 		"--log-error-verbosity=3",
+		fmt.Sprintf("--relay-log=%s-${index}-relay-bin", cluster.Name),
 		//"--loose-group-replication-communication-debug-options=GCS_DEBUG_ALL",
 	}
 
 	if cluster.Spec.HostNetwork {
 		args = append(args,
-			"--relay-log=${hostname}-relay-bin",
 			"--report-host=\"${hostname}\"")
 	} else {
 		args = append(args,
-			fmt.Sprintf("--relay-log=%s-${index}-relay-bin", cluster.Name),
 			fmt.Sprintf("--report-host=\"%[1]s-${index}.%[1]s\"", cluster.Name))
 	}
 	if cluster.RequiresCustomSSLSetup() {
