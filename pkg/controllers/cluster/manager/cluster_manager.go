@@ -61,7 +61,7 @@ type ClusterManager struct {
 	localMySh mysqlsh.Interface
 
 	// Instance is the local instance of MySQL under management.
-	Instance *cluster.Instance
+	Instance cluster.Instance
 
 	// primaryCancelFunc cancels the execution of the primary-only controllers.
 	primaryCancelFunc    context.CancelFunc
@@ -77,7 +77,7 @@ func newClusterManager(
 	kubeClient kubernetes.Interface,
 	kubeInformerFactory kubeinformers.SharedInformerFactory,
 	mysqlshFactory func(string) mysqlsh.Interface,
-	instance *cluster.Instance,
+	instance cluster.Instance,
 	clusterDRHost string,
 	clusterDRPort int,
 ) *ClusterManager {
@@ -164,7 +164,12 @@ func (m *ClusterManager) Sync(ctx context.Context) bool {
 
 		// We can't find a cluster. Bootstrap if we're the first member of the
 		// StatefulSet.
-		if m.Instance.Ordinal == 0 {
+		ordinal, err := m.Instance.Ordinal()
+		if err != nil {
+			glog.Errorln("instance invalid ordinal: ", err)
+			return false
+		}
+		if ordinal == 0 {
 			clusterStatus, err = m.bootstrap(ctx, myshErr)
 			if err != nil {
 				glog.Errorf("Error bootstrapping cluster: %v", err)
@@ -232,13 +237,14 @@ func (m *ClusterManager) Sync(ctx context.Context) bool {
 
 	default:
 		metrics.IncStatusCounter(instanceStatusCount, innodb.InstanceStatusUnknown)
-		glog.Errorf("Received unrecognised cluster membership status: %q", instanceStatus)
+		glog.Errorf("Received unrecognised cluster membership status: %q, instance Name: %v",
+			instanceStatus, m.Instance.Name())
 	}
 
-	if online && !m.Instance.MultiMaster {
+	if online && !m.Instance.MultiMaster() {
 		m.ensurePrimaryControllerState(ctx, clusterStatus)
 	}
-	if !m.Instance.MultiMaster {
+	if !m.Instance.MultiMaster() {
 		// for dual DC
 		m.ensureClusterDRReplication(ctx, clusterStatus)
 	}
@@ -364,7 +370,7 @@ func (m *ClusterManager) createCluster(ctx context.Context) (*innodb.ClusterStat
 		"memberSslMode": "REQUIRED",
 		"ipWhitelist":   whitelistCIDR,
 	}
-	if m.Instance.MultiMaster {
+	if m.Instance.MultiMaster() {
 		opts["force"] = "True"
 		opts["multiMaster"] = "True"
 	}
@@ -408,7 +414,7 @@ func (m *ClusterManager) ensureClusterDRReplication(
 	ctx context.Context,
 	status *innodb.ClusterStatus,
 ) error {
-	if m.Instance.MultiMaster {
+	if m.Instance.MultiMaster() {
 		// only used in single-master mode
 		return fmt.Errorf("can't be called in multi-master mode")
 	}

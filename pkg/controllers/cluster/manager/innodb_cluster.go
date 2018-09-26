@@ -55,9 +55,9 @@ func isDatabaseRunning(ctx context.Context) bool {
 	return err == nil
 }
 
-func podExists(kubeclient kubernetes.Interface, instance *cluster.Instance) bool {
+func podExists(kubeclient kubernetes.Interface, instance cluster.Instance) bool {
 	err := wait.ExponentialBackoff(retry.DefaultRetry, func() (bool, error) {
-		_, err := kubeclient.CoreV1().Pods(instance.Namespace).Get(instance.PodName(), metav1.GetOptions{})
+		_, err := kubeclient.CoreV1().Pods(instance.Namespace()).Get(instance.PodName(), metav1.GetOptions{})
 		if err != nil {
 			if apierrors.IsNotFound(err) {
 				return false, nil
@@ -72,7 +72,7 @@ func podExists(kubeclient kubernetes.Interface, instance *cluster.Instance) bool
 // getReplicationGroupSeeds returns the list of servers in the replication
 // group based on the given string (from the environment).
 // It removes the local instance of mysql from the group.
-func getReplicationGroupSeeds(seeds string, pod *cluster.Instance) ([]string, error) {
+func getReplicationGroupSeeds(seeds string, pod cluster.Instance) ([]string, error) {
 	s := []string{}
 	for _, seed := range strings.Split(seeds, ",") {
 		seedInstance, err := cluster.NewInstanceFromGroupSeed(seed)
@@ -92,7 +92,7 @@ func getReplicationGroupSeeds(seeds string, pod *cluster.Instance) ([]string, er
 // the seed nodes in turn (excluding the current node) until it finds a valid
 // cluster. If we can determine that no cluster is found on any of the seed
 // nodes, then we return the empty string.
-func getClusterStatusFromGroupSeeds(ctx context.Context, kubeclient kubernetes.Interface, pod *cluster.Instance) (*innodb.ClusterStatus, error) {
+func getClusterStatusFromGroupSeeds(ctx context.Context, kubeclient kubernetes.Interface, pod cluster.Instance) (*innodb.ClusterStatus, error) {
 	replicationGroupSeeds, err := getReplicationGroupSeeds(os.Getenv("REPLICATION_GROUP_SEEDS"), pod)
 	if err != nil {
 		return nil, err

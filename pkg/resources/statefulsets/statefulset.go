@@ -130,6 +130,13 @@ func clusterDRHostEnvVar(host string) v1.EnvVar {
 	}
 }
 
+func useHostNetworkEnvVar(enabled bool) v1.EnvVar {
+	return v1.EnvVar{
+		Name:  "MYSQL_CLUSTER_USE_HOST_NETWORK",
+		Value: strconv.FormatBool(enabled),
+	}
+}
+
 // Returns the MySQL_ROOT_PASSWORD environment variable
 // If a user specifies a secret in the spec we use that
 // else we create a secret with a random password
@@ -249,7 +256,12 @@ func mysqlAgentContainer(cluster *v1alpha1.Cluster, mysqlAgentImage string, root
 		agentVersion = version
 	}
 
-	replicationGroupSeeds := getReplicationGroupSeeds(cluster.Name, members)
+	var replicationGroupSeeds string
+	if cluster.Spec.HostNetwork {
+		replicationGroupSeeds = cluster.Spec.GRSeedsInHostNetwork
+	} else {
+		replicationGroupSeeds = getReplicationGroupSeeds(cluster.Name, members)
+	}
 
 	return v1.Container{
 		Name:         MySQLAgentName,
@@ -262,6 +274,7 @@ func mysqlAgentContainer(cluster *v1alpha1.Cluster, mysqlAgentImage string, root
 			replicationGroupSeedsEnvVar(replicationGroupSeeds),
 			multiMasterEnvVar(cluster.Spec.MultiMaster),
 			clusterDRHostEnvVar(cluster.Spec.ClusterDRHost),
+			useHostNetworkEnvVar(cluster.Spec.HostNetwork),
 			rootPassword,
 			{
 				Name: "MY_POD_IP",

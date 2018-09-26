@@ -46,7 +46,7 @@ const controllerAgentName = "innodb-cluster-labeler"
 // local MySQL instance believes that it is the primary of the MySQL cluster.
 type ClusterLabelerController struct {
 	// localInstance represents the local MySQL instance.
-	localInstance *cluster.Instance
+	localInstance cluster.Instance
 
 	// podLister is able to list/get Pods from a shared informer's store.
 	podLister corev1listers.PodLister
@@ -70,7 +70,7 @@ func keyFunc(obj interface{}) (string, error) {
 
 // NewClusterLabelerController creates a new ClusterLabelerController.
 func NewClusterLabelerController(
-	localInstance *cluster.Instance,
+	localInstance cluster.Instance,
 	kubeClient kubernetes.Interface,
 	podInformer corev1informers.PodInformer,
 ) *ClusterLabelerController {
@@ -108,8 +108,8 @@ func (clc *ClusterLabelerController) syncHandler(key string) error {
 	}
 	status := obj.(*innodb.ClusterStatus)
 
-	namespace := clc.localInstance.Namespace
-	clusterName := clc.localInstance.ClusterName
+	namespace := clc.localInstance.Namespace()
+	clusterName := clc.localInstance.ClusterName()
 
 	// Get any Pods already labeled as primaries for this cluster.
 	primaries, err := clc.podLister.Pods(namespace).List(PrimarySelector(clusterName))
@@ -127,7 +127,7 @@ func (clc *ClusterLabelerController) syncHandler(key string) error {
 		}
 
 		var role string
-		if !inCluster(status, pod.Name, clc.localInstance.Port) {
+		if !inCluster(status, pod.Name, clc.localInstance.Port()) {
 			glog.Infof("Removing %q label from previously labeled primary %s/%s",
 				constants.LabelClusterRole, pod.Namespace, pod.Name)
 			role = ""
@@ -163,7 +163,7 @@ func (clc *ClusterLabelerController) syncHandler(key string) error {
 
 	// Ensure they are labeled as secondary or not at all.
 	for _, pod := range pods {
-		if !inCluster(status, pod.Name, clc.localInstance.Port) {
+		if !inCluster(status, pod.Name, clc.localInstance.Port()) {
 			if HasRoleSelector(clusterName).Matches(labels.Set(pod.Labels)) {
 				glog.Infof("Removing %q label from %s/%s as it's no longer in an ONLINE state",
 					constants.LabelClusterRole, pod.Namespace, pod.Name)

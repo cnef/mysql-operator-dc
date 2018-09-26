@@ -105,8 +105,8 @@ func Run(opts *options.MySQLAgentOpts) error {
 	}
 
 	// Initialise the agent metrics.
-	metrics.RegisterPodName(opts.Hostname)
-	metrics.RegisterClusterName(manager.Instance.ClusterName)
+	metrics.RegisterPodName(manager.Instance.PodName())
+	metrics.RegisterClusterName(manager.Instance.ClusterName())
 	clustermgr.RegisterMetrics()
 	backupcontroller.RegisterMetrics()
 	restorecontroller.RegisterMetrics()

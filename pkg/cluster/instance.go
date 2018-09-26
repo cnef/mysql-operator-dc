@@ -15,145 +15,57 @@
 package cluster
 
 import (
-	"fmt"
 	"net"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/golang/glog"
 	"github.com/pkg/errors"
-
-	"github.com/oracle/mysql-operator/pkg/cluster/innodb"
 )
 
-// Instance represents the local MySQL instance.
-type Instance struct {
-	// Namespace is the Kubernetes Namespace in which the instance is running.
-	Namespace string
-	// ClusterName is the name of the Cluster to which the instance
-	// belongs.
-	ClusterName string
-	// ParentName is the name of the StatefulSet to which the instance belongs.
-	ParentName string
-	// Ordinal is the StatefulSet ordinal of the instances Pod.
-	Ordinal int
-	// Port is the port on which MySQLDB is listening.
-	Port int
-	// MultiMaster specifies if all, or just a single, instance is configured to be read/write.
-	MultiMaster bool
-
-	// IP is the IP address of the Kubernetes Pod.
-	IP net.IP
-}
-
-// NewInstance creates a new Instance.
-func NewInstance(namespace, clusterName, parentName string, ordinal, port int, multiMaster bool) *Instance {
-	return &Instance{
-		Namespace:   namespace,
-		ClusterName: clusterName,
-		ParentName:  parentName,
-		Ordinal:     ordinal,
-		Port:        port,
-		MultiMaster: multiMaster,
-	}
+type Instance interface {
+	GetUser() string
+	GetPassword() string
+	GetShellURI() string
+	GetAddr() string
+	Namespace() string
+	ClusterName() string
+	Name() string
+	PodName() string
+	Ordinal() (int, error)
+	Port() int
+	MultiMaster() bool
+	WhitelistCIDR() (string, error)
 }
 
 // NewLocalInstance creates a new instance of this structure, with it's name and index
 // populated from os.Hostname().
-func NewLocalInstance() (*Instance, error) {
-	hostname, err := os.Hostname()
+func NewLocalInstance() (Instance, error) {
+	useHostNetwork, err := strconv.ParseBool(os.Getenv("MYSQL_CLUSTER_USE_HOST_NETWORK"))
 	if err != nil {
 		return nil, err
 	}
-	name, ordinal := GetParentNameAndOrdinal(hostname)
-	multiMaster, _ := strconv.ParseBool(os.Getenv("MYSQL_CLUSTER_MULTI_MASTER"))
-	return &Instance{
-		Namespace:   os.Getenv("POD_NAMESPACE"),
-		ClusterName: os.Getenv("MYSQL_CLUSTER_NAME"),
-		ParentName:  name,
-		Ordinal:     ordinal,
-		Port:        innodb.MySQLDBPort,
-		MultiMaster: multiMaster,
-		IP:          net.ParseIP(os.Getenv("MY_POD_IP")),
-	}, nil
+	glog.V(6).Infoln("NewLocalInstance useHostNetwork: ", useHostNetwork)
+	if useHostNetwork {
+		return newLocalInstanceInHostNetwork()
+	}
+	return newLocalInstanceInClusterNetwork()
 }
 
 // NewInstanceFromGroupSeed creates an Instance from a fully qualified group
 // seed.
-func NewInstanceFromGroupSeed(seed string) (*Instance, error) {
-	podName, err := podNameFromSeed(seed)
+func NewInstanceFromGroupSeed(seed string) (Instance, error) {
+	useHostNetwork, err := strconv.ParseBool(os.Getenv("MYSQL_CLUSTER_USE_HOST_NETWORK"))
 	if err != nil {
-		return nil, errors.Wrap(err, "getting pod name from group seed")
+		return nil, err
 	}
-	// We don't care about the returned port here as the Instance's port its
-	// MySQLDB port not its group replication port.
-	parentName, ordinal := GetParentNameAndOrdinal(podName)
-	multiMaster, _ := strconv.ParseBool(os.Getenv("MYSQL_CLUSTER_MULTI_MASTER"))
-	return &Instance{
-		ClusterName: os.Getenv("MYSQL_CLUSTER_NAME"),
-		Namespace:   os.Getenv("POD_NAMESPACE"),
-		ParentName:  parentName,
-		Ordinal:     ordinal,
-		Port:        innodb.MySQLDBPort,
-		MultiMaster: multiMaster,
-	}, nil
-}
-
-// GetUser returns the username of the MySQL operator's management
-// user.
-func (i *Instance) GetUser() string {
-	return "root"
-}
-
-// GetPassword returns the password of the MySQL operator's
-// management user.
-func (i *Instance) GetPassword() string {
-	return os.Getenv("MYSQL_ROOT_PASSWORD")
-}
-
-// GetShellURI returns the MySQL shell URI for the local MySQL instance.
-func (i *Instance) GetShellURI() string {
-	return fmt.Sprintf("%s:%s@%s:%d", i.GetUser(), i.GetPassword(), i.Name(), i.Port)
-}
-
-// GetAddr returns the addr of the instance
-func (i *Instance) GetAddr() string {
-	return fmt.Sprintf("%s:%d", i.Name(), i.Port)
-}
-
-// Name returns the name of the instance.
-func (i *Instance) Name() string {
-	return fmt.Sprintf("%s.%s", i.PodName(), i.ParentName)
-}
-
-// PodName returns the name of the instance's Pod.
-func (i *Instance) PodName() string {
-	return fmt.Sprintf("%s-%d", i.ParentName, i.Ordinal)
-}
-
-// WhitelistCIDR returns the CIDR range to whitelist for GR based on the Pod's IP.
-func (i *Instance) WhitelistCIDR() (string, error) {
-	var privateRanges []*net.IPNet
-
-	for _, addrRange := range []string{
-		"10.0.0.0/8",
-		//"172.16.0.0/12",
-		"172.0.0.0/8",
-		"192.168.0.0/16",
-		"100.64.0.0/10", // IPv4 shared address space (RFC 6598), improperly used by kops
-	} {
-		_, block, _ := net.ParseCIDR(addrRange)
-		privateRanges = append(privateRanges, block)
+	glog.V(6).Infof("NewInstanceFromGroupSeed useHostNetwork:%v seed:%v", useHostNetwork, seed)
+	if useHostNetwork {
+		return newInstanceFromGroupSeedInHostNetwork(seed)
 	}
-
-	for _, block := range privateRanges {
-		if block.Contains(i.IP) {
-			return block.String(), nil
-		}
-	}
-
-	return "", errors.Errorf("pod IP %q is not a private IPv4 address", i.IP.String())
+	return newInstanceFromGroupSeedInClusterNetwork(seed)
 }
 
 // statefulPodRegex is a regular expression that extracts the parent StatefulSet
