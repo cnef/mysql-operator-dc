@@ -169,10 +169,7 @@ func getReplicationGroupSeeds(name string, members int) string {
 	return strings.Join(seeds, ",")
 }
 
-// Builds the MySQL operator container for a cluster.
-// The 'mysqlImage' parameter is the image name of the mysql server to use with
-// no version information.. e.g. 'mysql/mysql-server'
-func mysqlServerContainer(cluster *v1alpha1.Cluster, mysqlServerImage string, rootPassword v1.EnvVar, members int, baseServerID uint32) v1.Container {
+func getMysqlServerContainerArgs(cluster *v1alpha1.Cluster) string {
 	args := []string{
 		"--server_id=$(expr $base + $index)",
 		"--datadir=/var/lib/mysql",
@@ -186,33 +183,63 @@ func mysqlServerContainer(cluster *v1alpha1.Cluster, mysqlServerImage string, ro
 		"--master-info-repository=TABLE",
 		"--relay-log-info-repository=TABLE",
 		"--transaction-write-set-extraction=XXHASH64",
-		fmt.Sprintf("--relay-log=%s-${index}-relay-bin", cluster.Name),
-		fmt.Sprintf("--report-host=\"%[1]s-${index}.%[1]s\"", cluster.Name),
 		"--log-error-verbosity=3",
 		//"--loose-group-replication-communication-debug-options=GCS_DEBUG_ALL",
 	}
 
+	if cluster.Spec.HostNetwork {
+		args = append(args,
+			"--relay-log=${hostname}-relay-bin",
+			"--report-host=\"${hostname}\"")
+	} else {
+		args = append(args,
+			fmt.Sprintf("--relay-log=%s-${index}-relay-bin", cluster.Name),
+			fmt.Sprintf("--report-host=\"%[1]s-${index}.%[1]s\"", cluster.Name))
+	}
 	if cluster.RequiresCustomSSLSetup() {
 		args = append(args,
 			"--ssl-ca=/etc/ssl/mysql/ca.crt",
 			"--ssl-cert=/etc/ssl/mysql/tls.crt",
 			"--ssl-key=/etc/ssl/mysql/tls.key")
 	}
+	return strings.Join(args, " ")
+}
 
-	entryPointArgs := strings.Join(args, " ")
+func getMysqlServerContainerCmd(cluster *v1alpha1.Cluster, baseServerID uint32, args string) string {
+	if cluster.Spec.HostNetwork {
+		return fmt.Sprintf(`
+         # Set baseServerID
+		 base=%d
+		 hostname=$(cat /etc/hostname)
+
+         # Finds the replica index from the hostname, and uses this to define
+         # a unique server id for this instance.
+         index=$(echo ${MY_POD_NAME} | grep -o '[^-]*$')
+         /entrypoint.sh %s`, baseServerID, args)
+	}
+	return fmt.Sprintf(`
+         # Set baseServerID
+		 base=%d
+
+         # Finds the replica index from the hostname, and uses this to define
+         # a unique server id for this instance.
+         index=$(cat /etc/hostname | grep -o '[^-]*$')
+         /entrypoint.sh %s`, baseServerID, args)
+}
+
+// Builds the MySQL operator container for a cluster.
+// The 'mysqlImage' parameter is the image name of the mysql server to use with
+// no version information.. e.g. 'mysql/mysql-server'
+func mysqlServerContainer(cluster *v1alpha1.Cluster, mysqlServerImage string, rootPassword v1.EnvVar, members int, baseServerID uint32) v1.Container {
+	entryPointArgs := getMysqlServerContainerArgs(cluster)
+
+	cmd := getMysqlServerContainerCmd(cluster, baseServerID, entryPointArgs)
 
 	privileged := false
 	if cluster.Spec.Privileged {
 		privileged = true
 	}
-	cmd := fmt.Sprintf(`
-         # Set baseServerID
-         base=%d
 
-         # Finds the replica index from the hostname, and uses this to define
-         # a unique server id for this instance.
-         index=$(cat /etc/hostname | grep -o '[^-]*$')
-         /entrypoint.sh %s`, baseServerID, entryPointArgs)
 	return v1.Container{
 		Name: MySQLServerName,
 		// TODO(apryde): Add BaseImage to cluster CRD.
