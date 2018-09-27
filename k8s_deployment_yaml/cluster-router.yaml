@@ -55,3 +55,6 @@ spec:
         - "/bin/bash"
         - "-cx"
         - "exec /run.sh mysqlrouter"
+      # if use host-network, please uncomment it.
+      # hostNetwork: true
+      # dnsPolicy: ClusterFirstWithHostNet

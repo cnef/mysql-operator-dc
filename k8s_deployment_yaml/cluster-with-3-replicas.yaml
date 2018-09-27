@@ -9,6 +9,12 @@ spec:
   baseServerId: 2000
   config:
     name: mycnf
+  # if use host-network, please uncomment it
+  # hostNetwork: true
+  #
+  # if use host-network, please fill in right hostname:port
+  # grSeedsInHostNetwork: infra-sh-dr-0:13306,infra-sh-dr-1:13306,infra-sh-dr-2:13306
+  #
   # if need DR, please set the clusterDRHost to the router-service-host
   # clusterDRHost: 10.5.6.13:30446
   rootPasswordSecret:
