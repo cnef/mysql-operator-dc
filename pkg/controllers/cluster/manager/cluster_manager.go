@@ -164,11 +164,7 @@ func (m *ClusterManager) Sync(ctx context.Context) bool {
 
 		// We can't find a cluster. Bootstrap if we're the first member of the
 		// StatefulSet.
-		ordinal, err := m.Instance.Ordinal()
-		if err != nil {
-			glog.Errorln("instance invalid ordinal: ", err)
-			return false
-		}
+		ordinal := m.Instance.Ordinal()
 		if ordinal == 0 {
 			clusterStatus, err = m.bootstrap(ctx, myshErr)
 			if err != nil {

@@ -185,16 +185,10 @@ func getMysqlServerContainerArgs(cluster *v1alpha1.Cluster) string {
 		"--transaction-write-set-extraction=XXHASH64",
 		"--log-error-verbosity=3",
 		fmt.Sprintf("--relay-log=%s-${index}-relay-bin", cluster.Name),
+		fmt.Sprintf("--report-host=\"%[1]s-${index}.%[1]s\"", cluster.Name),
 		//"--loose-group-replication-communication-debug-options=GCS_DEBUG_ALL",
 	}
 
-	if cluster.Spec.HostNetwork {
-		args = append(args,
-			"--report-host=\"${hostname}\"")
-	} else {
-		args = append(args,
-			fmt.Sprintf("--report-host=\"%[1]s-${index}.%[1]s\"", cluster.Name))
-	}
 	if cluster.RequiresCustomSSLSetup() {
 		args = append(args,
 			"--ssl-ca=/etc/ssl/mysql/ca.crt",
@@ -282,12 +276,7 @@ func mysqlAgentContainer(cluster *v1alpha1.Cluster, mysqlAgentImage string, root
 		agentVersion = version
 	}
 
-	var replicationGroupSeeds string
-	if cluster.Spec.HostNetwork {
-		replicationGroupSeeds = cluster.Spec.GRSeedsInHostNetwork
-	} else {
-		replicationGroupSeeds = getReplicationGroupSeeds(cluster.Name, members)
-	}
+	replicationGroupSeeds := getReplicationGroupSeeds(cluster.Name, members)
 
 	return v1.Container{
 		Name:         MySQLAgentName,

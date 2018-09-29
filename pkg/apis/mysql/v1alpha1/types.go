@@ -74,13 +74,6 @@ type ClusterSpec struct {
 	// HostNetwork allows pods to use host network
 	// +optional
 	HostNetwork bool `json:"hostNetwork,omitempty"`
-	// GRSeedsInHostNetwork stands for "group replication seeds in host-network"
-	// because we can't generate GROUP_REPLICATION_SEEDS like "mysql-cluster-0,mysql-cluster-1,..."
-	// which could be done in cluster-network.
-	// in host-network, maybe we want seeds like "infra-0,infra-2,infra-4" in k8s-cluster which have 5 nodes.
-	// so, need set seeds manually
-	// +optional
-	GRSeedsInHostNetwork string `json:"grSeedsInHostNetwork,omitempty"`
 }
 
 // ClusterConditionType represents a valid condition of a Cluster.

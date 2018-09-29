@@ -34,7 +34,7 @@ type Instance interface {
 	ClusterName() string
 	Name() string
 	PodName() string
-	Ordinal() (int, error)
+	Ordinal() int
 	Port() int
 	MultiMaster() bool
 	WhitelistCIDR() (string, error)

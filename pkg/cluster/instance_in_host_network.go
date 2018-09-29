@@ -18,7 +18,7 @@ type InstanceInHostNetwork struct {
 	// belongs.
 	clusterName string
 	// ordinalIsValid indicate the ordinal is valid or not
-	ordinalIsValid bool
+	parentName string
 	// Ordinal is the StatefulSet ordinal of the instances Pod.
 	ordinal int
 	// Port is the port on which MySQLDB is listening.
@@ -31,51 +31,46 @@ type InstanceInHostNetwork struct {
 
 	// podname
 	podName string
-	// hostname
-	hostName string
 }
 
 // create local instance when use cluster network
 func newLocalInstanceInHostNetwork() (*InstanceInHostNetwork, error) {
-	hostname, err := os.Hostname()
-	if err != nil {
-		return nil, err
-	}
 	podName := os.Getenv("MY_POD_NAME")
 	if podName == "" {
 		return nil, errors.Errorf("use host-network, but pod name not set")
 	}
-	_, ordinal := GetParentNameAndOrdinal(podName)
+	parentName, ordinal := GetParentNameAndOrdinal(podName)
 	multiMaster, _ := strconv.ParseBool(os.Getenv("MYSQL_CLUSTER_MULTI_MASTER"))
 	return &InstanceInHostNetwork{
-		clusterName:    os.Getenv("MYSQL_CLUSTER_NAME"),
-		namespace:      os.Getenv("POD_NAMESPACE"),
-		ordinalIsValid: true,
-		ordinal:        ordinal,
-		port:           innodb.MySQLDBPort,
-		multiMaster:    multiMaster,
-		ip:             net.ParseIP(os.Getenv("MY_POD_IP")),
-		hostName:       hostname,
-		podName:        podName,
+		clusterName: os.Getenv("MYSQL_CLUSTER_NAME"),
+		namespace:   os.Getenv("POD_NAMESPACE"),
+		parentName:  parentName,
+		ordinal:     ordinal,
+		port:        innodb.MySQLDBPort,
+		multiMaster: multiMaster,
+		ip:          net.ParseIP(os.Getenv("MY_POD_IP")),
+		podName:     podName,
 	}, nil
 }
 
 // seed should be hostname:mysql-port
 func newInstanceFromGroupSeedInHostNetwork(seed string) (*InstanceInHostNetwork, error) {
-	hostName, err := podNameFromSeed(seed)
+	podName, err := podNameFromSeed(seed)
 	if err != nil {
 		return nil, errors.Wrap(err, "getting pod name from group seed")
 	}
 	// We don't care about the returned port here as the Instance's port its
 	// MySQLDB port not its group replication port.
+	parentName, ordinal := GetParentNameAndOrdinal(podName)
 	multiMaster, _ := strconv.ParseBool(os.Getenv("MYSQL_CLUSTER_MULTI_MASTER"))
 	return &InstanceInHostNetwork{
 		clusterName: os.Getenv("MYSQL_CLUSTER_NAME"),
 		namespace:   os.Getenv("POD_NAMESPACE"),
+		parentName:  parentName,
+		ordinal:     ordinal,
 		port:        innodb.MySQLDBPort,
 		multiMaster: multiMaster,
-		hostName:    hostName,
-		podName:     os.Getenv("MY_POD_NAME"),
+		podName:     podName,
 	}, nil
 }
 
@@ -93,12 +88,12 @@ func (i *InstanceInHostNetwork) GetPassword() string {
 
 // GetShellURI returns the MySQL shell URI for the local MySQL instance.
 func (i *InstanceInHostNetwork) GetShellURI() string {
-	return fmt.Sprintf("%s:%s@%s:%d", i.GetUser(), i.GetPassword(), i.hostName, i.port)
+	return fmt.Sprintf("%s:%s@%s:%d", i.GetUser(), i.GetPassword(), i.Name(), i.port)
 }
 
 // GetAddr returns the addr of the instance
 func (i *InstanceInHostNetwork) GetAddr() string {
-	return fmt.Sprintf("%s:%d", i.hostName, i.port)
+	return fmt.Sprintf("%s:%d", i.Name(), i.port)
 }
 
 // Namespace returns the namespace of the instance
@@ -113,7 +108,7 @@ func (i *InstanceInHostNetwork) ClusterName() string {
 
 // Name returns the name of the instance.
 func (i *InstanceInHostNetwork) Name() string {
-	return i.hostName
+	return fmt.Sprintf("%s.%s", i.PodName(), i.parentName)
 }
 
 // PodName returns the pod name of the instance.
@@ -122,11 +117,8 @@ func (i *InstanceInHostNetwork) PodName() string {
 }
 
 // Ordinal returns the ordinal of the instance.
-func (i *InstanceInHostNetwork) Ordinal() (int, error) {
-	if i.ordinalIsValid {
-		return i.ordinal, nil
-	}
-	return 0, errors.Errorf("invalid ordinal in host-network")
+func (i *InstanceInHostNetwork) Ordinal() int {
+	return i.ordinal
 }
 
 // Port returns the port of the instance.

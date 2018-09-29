@@ -111,8 +111,8 @@ func (i *InstanceInClusterNetwork) PodName() string {
 }
 
 // Ordinal returns the ordinal of the instance.
-func (i *InstanceInClusterNetwork) Ordinal() (int, error) {
-	return i.ordinal, nil
+func (i *InstanceInClusterNetwork) Ordinal() int {
+	return i.ordinal
 }
 
 // Port returns the pods of the instance.
