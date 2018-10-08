@@ -1,0 +1,2 @@
+mysql filter=lfs diff=lfs merge=lfs -text
+mysqldump filter=lfs diff=lfs merge=lfs -text
