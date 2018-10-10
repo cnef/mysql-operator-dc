@@ -31,10 +31,16 @@ type InstanceInHostNetwork struct {
 
 	// podname
 	podName string
+	// hostname
+	hostName string
 }
 
 // create local instance when use cluster network
 func newLocalInstanceInHostNetwork() (*InstanceInHostNetwork, error) {
+	hostName, err := os.Hostname()
+	if err != nil {
+		return nil, err
+	}
 	podName := os.Getenv("MY_POD_NAME")
 	if podName == "" {
 		return nil, errors.Errorf("use host-network, but pod name not set")
@@ -50,17 +56,22 @@ func newLocalInstanceInHostNetwork() (*InstanceInHostNetwork, error) {
 		multiMaster: multiMaster,
 		ip:          net.ParseIP(os.Getenv("MY_POD_IP")),
 		podName:     podName,
+		hostName:    hostName,
 	}, nil
 }
 
 // seed should be hostname:mysql-port
 func newInstanceFromGroupSeedInHostNetwork(seed string) (*InstanceInHostNetwork, error) {
-	podName, err := podNameFromSeed(seed)
+	hostName, err := podNameFromSeed(seed)
 	if err != nil {
 		return nil, errors.Wrap(err, "getting pod name from group seed")
 	}
 	// We don't care about the returned port here as the Instance's port its
 	// MySQLDB port not its group replication port.
+	podName := os.Getenv("MY_POD_NAME")
+	if podName == "" {
+		return nil, errors.Errorf("use host-network, but pod name not set")
+	}
 	parentName, ordinal := GetParentNameAndOrdinal(podName)
 	multiMaster, _ := strconv.ParseBool(os.Getenv("MYSQL_CLUSTER_MULTI_MASTER"))
 	return &InstanceInHostNetwork{
@@ -71,6 +82,7 @@ func newInstanceFromGroupSeedInHostNetwork(seed string) (*InstanceInHostNetwork,
 		port:        innodb.MySQLDBPort,
 		multiMaster: multiMaster,
 		podName:     podName,
+		hostName:    hostName,
 	}, nil
 }
 
@@ -108,7 +120,7 @@ func (i *InstanceInHostNetwork) ClusterName() string {
 
 // Name returns the name of the instance.
 func (i *InstanceInHostNetwork) Name() string {
-	return fmt.Sprintf("%s.%s", i.PodName(), i.parentName)
+	return i.hostName
 }
 
 // PodName returns the pod name of the instance.
