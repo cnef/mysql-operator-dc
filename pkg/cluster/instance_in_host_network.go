@@ -68,20 +68,12 @@ func newInstanceFromGroupSeedInHostNetwork(seed string) (*InstanceInHostNetwork,
 	}
 	// We don't care about the returned port here as the Instance's port its
 	// MySQLDB port not its group replication port.
-	podName := os.Getenv("MY_POD_NAME")
-	if podName == "" {
-		return nil, errors.Errorf("use host-network, but pod name not set")
-	}
-	parentName, ordinal := GetParentNameAndOrdinal(podName)
 	multiMaster, _ := strconv.ParseBool(os.Getenv("MYSQL_CLUSTER_MULTI_MASTER"))
 	return &InstanceInHostNetwork{
 		clusterName: os.Getenv("MYSQL_CLUSTER_NAME"),
 		namespace:   os.Getenv("POD_NAMESPACE"),
-		parentName:  parentName,
-		ordinal:     ordinal,
 		port:        innodb.MySQLDBPort,
 		multiMaster: multiMaster,
-		podName:     podName,
 		hostName:    hostName,
 	}, nil
 }

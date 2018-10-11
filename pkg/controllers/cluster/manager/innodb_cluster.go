@@ -56,6 +56,10 @@ func isDatabaseRunning(ctx context.Context) bool {
 }
 
 func podExists(kubeclient kubernetes.Interface, instance cluster.Instance) bool {
+	if instance.PodName() == "" {
+		// useHostNetwork and newInstance from seeds like 'infra-sh-dr-0', there is no podname in this instance
+		return true
+	}
 	err := wait.ExponentialBackoff(retry.DefaultRetry, func() (bool, error) {
 		_, err := kubeclient.CoreV1().Pods(instance.Namespace()).Get(instance.PodName(), metav1.GetOptions{})
 		if err != nil {

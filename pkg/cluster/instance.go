@@ -15,6 +15,7 @@
 package cluster
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"regexp"
@@ -66,6 +67,35 @@ func NewInstanceFromGroupSeed(seed string) (Instance, error) {
 		return newInstanceFromGroupSeedInHostNetwork(seed)
 	}
 	return newInstanceFromGroupSeedInClusterNetwork(seed)
+}
+
+// NewInstance creates instance for unit test
+func NewInstance(
+	namespace, clusterName, parentName, hostName string,
+	ordinal, port int,
+	multiMaster, useHostNetwork bool,
+) Instance {
+
+	if useHostNetwork {
+		return &InstanceInHostNetwork{
+			namespace:   namespace,
+			clusterName: clusterName,
+			parentName:  parentName,
+			ordinal:     ordinal,
+			port:        port,
+			multiMaster: multiMaster,
+			podName:     fmt.Sprintf("%v-%v", parentName, ordinal),
+			hostName:    hostName,
+		}
+	}
+	return &InstanceInClusterNetwork{
+		namespace:   namespace,
+		clusterName: clusterName,
+		parentName:  parentName,
+		ordinal:     ordinal,
+		port:        port,
+		multiMaster: multiMaster,
+	}
 }
 
 // statefulPodRegex is a regular expression that extracts the parent StatefulSet
