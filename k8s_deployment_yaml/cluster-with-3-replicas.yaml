@@ -9,6 +9,9 @@ spec:
   baseServerId: 2000
   config:
     name: mycnf
+  # if use multi-master-mode, please uncomment it
+  # multiMaster: true
+  #
   # if use host-network, please uncomment it
   # hostNetwork: true
   #
