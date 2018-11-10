@@ -12,6 +12,10 @@ spec:
   # if use multi-master-mode, please uncomment it
   # multiMaster: true
   #
+  # deploy mysql-cluster onto specified node
+  # nodeSelector:
+  #   senseguard.sensetime.com/node-mysql: "True"
+  #
   # if use host-network, please uncomment it
   # hostNetwork: true
   #
