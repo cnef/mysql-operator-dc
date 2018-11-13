@@ -17,6 +17,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	apps "k8s.io/api/apps/v1beta1"
@@ -38,6 +39,7 @@ import (
 	record "k8s.io/client-go/tools/record"
 	workqueue "k8s.io/client-go/util/workqueue"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/golang/glog"
 	"github.com/pkg/errors"
 
@@ -50,7 +52,7 @@ import (
 	informersv1alpha1 "github.com/oracle/mysql-operator/pkg/generated/informers/externalversions/mysql/v1alpha1"
 	listersv1alpha1 "github.com/oracle/mysql-operator/pkg/generated/listers/mysql/v1alpha1"
 
-	options "github.com/oracle/mysql-operator/cmd/mysql-operator/app/options"
+	operatoropts "github.com/oracle/mysql-operator/pkg/options/operator"
 	secrets "github.com/oracle/mysql-operator/pkg/resources/secrets"
 	services "github.com/oracle/mysql-operator/pkg/resources/services"
 	statefulsets "github.com/oracle/mysql-operator/pkg/resources/statefulsets"
@@ -80,7 +82,7 @@ const (
 // The MySQLController watches the Kubernetes API for changes to MySQL resources
 type MySQLController struct {
 	// Global MySQLOperator configuration options.
-	opConfig options.MySQLOperatorServer
+	opConfig operatoropts.MySQLOperatorOpts
 
 	kubeClient kubernetes.Interface
 	opClient   clientset.Interface
@@ -138,7 +140,7 @@ type MySQLController struct {
 
 // NewController creates a new MySQLController.
 func NewController(
-	opConfig options.MySQLOperatorServer,
+	opConfig operatoropts.MySQLOperatorOpts,
 	opClient clientset.Interface,
 	kubeClient kubernetes.Interface,
 	clusterInformer informersv1alpha1.ClusterInformer,
@@ -322,6 +324,10 @@ func (m *MySQLController) syncHandler(key string) error {
 		return errors.Wrap(err, "validating Cluster")
 	}
 
+	if cluster.Spec.Repository == "" {
+		cluster.Spec.Repository = m.opConfig.Images.DefaultMySQLServerImage
+	}
+
 	operatorVersion := buildversion.GetBuildVersion()
 	// Ensure that the required labels are set on the cluster.
 	sel := combineSelectors(SelectorForCluster(cluster), SelectorForClusterOperatorVersion(operatorVersion))
@@ -390,9 +396,13 @@ func (m *MySQLController) syncHandler(key string) error {
 	}
 
 	// Upgrade the required component resources the current MySQLOperator version.
-	err = m.ensureMySQLOperatorVersion(cluster, ss, buildversion.GetBuildVersion())
-	if err != nil {
-		return err
+	if err := m.ensureMySQLOperatorVersion(cluster, ss, buildversion.GetBuildVersion()); err != nil {
+		return errors.Wrap(err, "ensuring MySQL Operator version")
+	}
+
+	// Upgrade the MySQL server version if required.
+	if err := m.ensureMySQLVersion(cluster, ss); err != nil {
+		return errors.Wrap(err, "ensuring MySQL version")
 	}
 
 	// If this number of the members on the Cluster does not equal the
@@ -418,6 +428,67 @@ func (m *MySQLController) syncHandler(key string) error {
 	}
 
 	m.recorder.Event(cluster, corev1.EventTypeNormal, SuccessSynced, MessageResourceSynced)
+	return nil
+}
+
+func getMySQLContainerIndex(containers []corev1.Container) (int, error) {
+	for i, c := range containers {
+		if c.Name == statefulsets.MySQLServerName {
+			return i, nil
+		}
+	}
+
+	return 0, errors.Errorf("no %q container found", statefulsets.MySQLServerName)
+}
+
+// splitImage splits an image into its name and version.
+func splitImage(image string) (string, string, error) {
+	parts := strings.Split(image, ":")
+	if len(parts) < 2 {
+		return "", "", errors.Errorf("invalid image %q", image)
+	}
+	return strings.Join(parts[:len(parts)-1], ""), parts[len(parts)-1], nil
+}
+
+func (m *MySQLController) ensureMySQLVersion(c *v1alpha1.Cluster, ss *apps.StatefulSet) error {
+	index, err := getMySQLContainerIndex(ss.Spec.Template.Spec.Containers)
+	if err != nil {
+		return errors.Wrapf(err, "getting MySQL container for StatefulSet %q", ss.Name)
+	}
+	imageName, actualVersion, err := splitImage(ss.Spec.Template.Spec.Containers[index].Image)
+	if err != nil {
+		return errors.Wrapf(err, "getting MySQL version for StatefulSet %q", ss.Name)
+	}
+
+	actual, err := semver.NewVersion(actualVersion)
+	if err != nil {
+		return errors.Wrap(err, "parsing StatuefulSet MySQL version")
+	}
+	expected, err := semver.NewVersion(c.Spec.Version)
+	if err != nil {
+		return errors.Wrap(err, "parsing Cluster MySQL version")
+	}
+
+	switch expected.Compare(*actual) {
+	case -1:
+		return errors.Errorf("attempted unsupported downgrade from %q to %q", actual, expected)
+	case 0:
+		return nil
+	}
+
+	updated := ss.DeepCopy()
+	updated.Spec.Template.Spec.Containers[index].Image = fmt.Sprintf("%s:%s", imageName, c.Spec.Version)
+	// NOTE: We do this as previously we defaulted to the OnDelete strategy
+	// so clusters created with previous versions would not support upgrades.
+	updated.Spec.UpdateStrategy = apps.StatefulSetUpdateStrategy{
+		Type: apps.RollingUpdateStatefulSetStrategyType,
+	}
+
+	err = m.statefulSetControl.Patch(ss, updated)
+	if err != nil {
+		return errors.Wrap(err, "patching StatefulSet")
+	}
+
 	return nil
 }
 

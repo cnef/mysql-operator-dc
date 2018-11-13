@@ -18,13 +18,12 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
-	"os"
-	"path"
-	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/golang/glog"
+	"github.com/pkg/errors"
 
 	utilexec "k8s.io/utils/exec"
 
@@ -81,31 +80,24 @@ func (ex *Executor) Backup(backupDir string, clusterName string) (io.ReadCloser,
 	mu.Lock()
 	defer mu.Unlock()
 
-	tmpFile := path.Join(
-		backupDir,
-		fmt.Sprintf("%s.%s.sql.gz", clusterName, time.Now().UTC().Format("20060102150405")))
+	backupName := fmt.Sprintf("%s.%s.sql.gz", clusterName, time.Now().UTC().Format("20060102150405"))
 
-	f, err := os.Create(tmpFile)
-	if err != nil {
-		return nil, "", err
-	}
-	defer f.Close()
-
-	zw := gzip.NewWriter(f)
-	defer zw.Close()
+	pr, pw := io.Pipe()
+	zw := gzip.NewWriter(pw)
 	cmd.SetStdout(zw)
 
-	glog.V(4).Infof("running cmd: '%v'", cmd)
-	err = cmd.Run()
-	if err != nil {
-		return nil, "", err
-	}
+	go func() {
+		glog.V(4).Infof("running cmd: '%s %s'", mysqldumpPath, SanitizeArgs(append(args, dbNames...), ex.config.password))
+		err = cmd.Run()
+		zw.Close()
+		if err != nil {
+			pw.CloseWithError(errors.Wrap(err, "executing backup"))
+		} else {
+			pw.Close()
+		}
+	}()
 
-	content, err := os.Open(tmpFile)
-	if err != nil {
-		return nil, "", err
-	}
-	return content, filepath.Base(tmpFile), nil
+	return pr, backupName, nil
 }
 
 // Restore a cluster from a mysqldump.
@@ -135,7 +127,13 @@ func (ex *Executor) Restore(content io.ReadCloser) error {
 	defer zr.Close()
 	cmd.SetStdin(zr)
 
-	glog.V(4).Infof("running cmd: '%v'", cmd)
+	glog.V(4).Infof("running cmd: '%s %s'", mysqlPath, SanitizeArgs(args, ex.config.password))
 	_, err = cmd.CombinedOutput()
 	return err
+}
+
+// SanitizeArgs takes a slice, redacts all occurrences of a given string and
+// returns a single string concatenated with spaces
+func SanitizeArgs(args []string, old string) string {
+	return strings.Replace(strings.Join(args, " "), old, "REDACTED", -1)
 }

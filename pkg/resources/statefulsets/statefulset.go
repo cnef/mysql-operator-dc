@@ -22,15 +22,16 @@ import (
 
 	apps "k8s.io/api/apps/v1beta1"
 	"k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/golang/glog"
-	agentopts "github.com/oracle/mysql-operator/cmd/mysql-agent/app/options"
-	operatoropts "github.com/oracle/mysql-operator/cmd/mysql-operator/app/options"
 	"github.com/oracle/mysql-operator/pkg/apis/mysql/v1alpha1"
 	"github.com/oracle/mysql-operator/pkg/constants"
+	agentopts "github.com/oracle/mysql-operator/pkg/options/agent"
+	operatoropts "github.com/oracle/mysql-operator/pkg/options/operator"
 	"github.com/oracle/mysql-operator/pkg/resources/secrets"
 	"github.com/oracle/mysql-operator/pkg/version"
 )
@@ -237,6 +238,11 @@ func mysqlServerContainer(cluster *v1alpha1.Cluster, mysqlServerImage string, ro
 		privileged = true
 	}
 
+	var resourceLimits corev1.ResourceRequirements
+	if cluster.Spec.Resources != nil && cluster.Spec.Resources.Server != nil {
+		resourceLimits = *cluster.Spec.Resources.Server
+	}
+
 	return v1.Container{
 		Name: MySQLServerName,
 		// TODO(apryde): Add BaseImage to cluster CRD.
@@ -271,6 +277,7 @@ func mysqlServerContainer(cluster *v1alpha1.Cluster, mysqlServerImage string, ro
 		SecurityContext: &v1.SecurityContext{
 			Privileged: &privileged,
 		},
+		Resources: resourceLimits,
 	}
 }
 
@@ -286,6 +293,11 @@ func mysqlAgentContainer(cluster *v1alpha1.Cluster, mysqlAgentImage string, root
 		replicationGroupSeeds = cluster.Spec.GRSeedsInHostNetwork
 	} else {
 		replicationGroupSeeds = getReplicationGroupSeeds(cluster.Name, members)
+	}
+
+	var resourceLimits corev1.ResourceRequirements
+	if cluster.Spec.Resources != nil && cluster.Spec.Resources.Agent != nil {
+		resourceLimits = *cluster.Spec.Resources.Agent
 	}
 
 	return v1.Container{
@@ -334,6 +346,7 @@ func mysqlAgentContainer(cluster *v1alpha1.Cluster, mysqlAgentImage string, root
 				},
 			},
 		},
+		Resources: resourceLimits,
 	}
 }
 
@@ -403,7 +416,7 @@ func NewForCluster(cluster *v1alpha1.Cluster, images operatoropts.Images, servic
 	}
 
 	containers := []v1.Container{
-		mysqlServerContainer(cluster, images.MySQLServerImage, rootPassword, members, baseServerID),
+		mysqlServerContainer(cluster, cluster.Spec.Repository, rootPassword, members, baseServerID),
 		mysqlAgentContainer(cluster, images.MySQLAgentImage, rootPassword, members)}
 
 	podLabels := map[string]string{
@@ -459,15 +472,27 @@ func NewForCluster(cluster *v1alpha1.Cluster, images operatoropts.Images, servic
 					DNSPolicy:          dnsPolicy,
 				},
 			},
+			UpdateStrategy: apps.StatefulSetUpdateStrategy{
+				Type: apps.RollingUpdateStatefulSetStrategyType,
+			},
 			ServiceName: serviceName,
 		},
 	}
 
+	if cluster.Spec.ImagePullSecrets != nil {
+		ss.Spec.Template.Spec.ImagePullSecrets = append(ss.Spec.Template.Spec.ImagePullSecrets, cluster.Spec.ImagePullSecrets...)
+	}
 	if cluster.Spec.VolumeClaimTemplate != nil {
 		ss.Spec.VolumeClaimTemplates = append(ss.Spec.VolumeClaimTemplates, *cluster.Spec.VolumeClaimTemplate)
 	}
 	if cluster.Spec.BackupVolumeClaimTemplate != nil {
 		ss.Spec.VolumeClaimTemplates = append(ss.Spec.VolumeClaimTemplates, *cluster.Spec.BackupVolumeClaimTemplate)
+	}
+	if cluster.Spec.SecurityContext != nil {
+		ss.Spec.Template.Spec.SecurityContext = cluster.Spec.SecurityContext
+	}
+	if cluster.Spec.Tolerations != nil {
+		ss.Spec.Template.Spec.Tolerations = *cluster.Spec.Tolerations
 	}
 	return ss
 }

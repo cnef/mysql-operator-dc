@@ -27,6 +27,11 @@ const MinimumMySQLVersion = "8.0.11"
 type ClusterSpec struct {
 	// Version defines the MySQL Docker image version.
 	Version string `json:"version"`
+	// Repository defines the image repository from which to pull the MySQL server image.
+	Repository string `json:"repository"`
+	// ImagePullSecret defines the name of the secret that contains the
+	// required credentials for pulling from the specified Repository.
+	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecret"`
 	// Members defines the number of MySQL instances in a cluster
 	Members int32 `json:"members,omitempty"`
 	// BaseServerID defines the base number used to create unique server_id
@@ -81,6 +86,13 @@ type ClusterSpec struct {
 	// so, need set seeds manually
 	// +optional
 	GRSeedsInHostNetwork string `json:"grSeedsInHostNetwork,omitempty"`
+	// SecurityContext holds Pod-level security attributes and common Container settings.
+	SecurityContext *corev1.PodSecurityContext `json:"securityContext,omitempty"`
+	// Tolerations allows specifying a list of tolerations for controlling which
+	// set of Nodes a Pod can be scheduled on
+	Tolerations *[]corev1.Toleration `json:"tolerations,omitempty"`
+	// Resources holds ResourceRequirements for the MySQL Agent & Server Containers
+	Resources *Resources `json:"resources,omitempty"`
 }
 
 // ClusterConditionType represents a valid condition of a Cluster.
@@ -135,6 +147,12 @@ type ClusterList struct {
 	metav1.ListMeta `json:"metadata"`
 
 	Items []Cluster `json:"items"`
+}
+
+// Resources holds ResourceRequirements for the MySQL Agent & Server Containers
+type Resources struct {
+	Agent  *corev1.ResourceRequirements `json:"agent,omitempty"`
+	Server *corev1.ResourceRequirements `json:"server,omitempty"`
 }
 
 // Database represents a database to backup.

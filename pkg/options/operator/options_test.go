@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package options
+package operator
 
 import (
 	"testing"
@@ -21,12 +21,12 @@ import (
 )
 
 func TestEnsureDefaults(t *testing.T) {
-	server := MySQLOperatorServer{}
+	server := MySQLOperatorOpts{}
 	server.EnsureDefaults()
 	assertRequiredDefaults(t, server)
 }
 
-func assertRequiredDefaults(t *testing.T, s MySQLOperatorServer) {
+func assertRequiredDefaults(t *testing.T, s MySQLOperatorOpts) {
 	if &s == nil {
 		t.Error("MySQLOperatorServer: was nil, expected a valid configuration.")
 	}
@@ -35,9 +35,6 @@ func assertRequiredDefaults(t *testing.T, s MySQLOperatorServer) {
 	}
 	if &s.Images == nil {
 		t.Error("MySQLOperatorServer.Images: was nil, expected a valid configuration.")
-	}
-	if s.Images.MySQLServerImage != mysqlServer {
-		t.Errorf("MySQLOperatorServer.Images.MySQLServerImage: was '%s', expected '%s'.", s.Images.MySQLServerImage, mysqlServer)
 	}
 	if s.Images.MySQLAgentImage != mysqlAgent {
 		t.Errorf("MySQLOperatorServer.Images.MySQLAgentImage: was '%s', expected '%s'.", s.Images.MySQLAgentImage, mysqlAgent)
@@ -52,22 +49,22 @@ func assertRequiredDefaults(t *testing.T, s MySQLOperatorServer) {
 }
 
 func TestEnsureDefaultsOverrideSafety(t *testing.T) {
-	expected := mockMySQLOperatorServer()
-	ensured := mockMySQLOperatorServer()
+	expected := mockMySQLOperatorOpts()
+	ensured := mockMySQLOperatorOpts()
 	ensured.EnsureDefaults()
 	if expected != ensured {
-		t.Errorf("MySQLOperatorServer.EnsureDefaults() should not modify pre-configured values.")
+		t.Errorf("MySQLOperatorOpts.EnsureDefaults() should not modify pre-configured values.")
 	}
 }
 
-func mockMySQLOperatorServer() MySQLOperatorServer {
-	return MySQLOperatorServer{
+func mockMySQLOperatorOpts() MySQLOperatorOpts {
+	return MySQLOperatorOpts{
 		KubeConfig: "some-kube-config",
 		Master:     "some-master",
 		Hostname:   "some-hostname",
 		Images: Images{
-			MySQLServerImage: "some-mysql-img",
-			MySQLAgentImage:  "some-agent-img",
+			MySQLAgentImage:         "some-agent-img",
+			DefaultMySQLServerImage: "mysql/mysql-server",
 		},
 		MinResyncPeriod: v1.Duration{Duration: 42},
 	}
