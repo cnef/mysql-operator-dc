@@ -34,6 +34,8 @@ import (
 	operatoropts "github.com/oracle/mysql-operator/pkg/options/operator"
 	"github.com/oracle/mysql-operator/pkg/resources/secrets"
 	"github.com/oracle/mysql-operator/pkg/version"
+
+	"github.com/coreos/go-semver/semver"
 )
 
 const (
@@ -49,6 +51,8 @@ const (
 	mySQLSSLVolumeName    = "mysqlsslvolume"
 
 	replicationGroupPort = 13306
+
+	minMysqlVersionWithGroupExitStateArgs = "8.0.12"
 )
 
 func volumeMounts(cluster *v1alpha1.Cluster) []v1.VolumeMount {
@@ -170,6 +174,26 @@ func getReplicationGroupSeeds(name string, members int) string {
 	return strings.Join(seeds, ",")
 }
 
+func checkSupportGroupExitStateArgs(deployingVersion string) (supportedVer bool) {
+	defer func() {
+		if r := recover(); r != nil {
+
+		}
+	}()
+
+	supportedVer = false
+
+	ver := semver.New(deployingVersion)
+	minVer := semver.New(minMysqlVersionWithGroupExitStateArgs)
+
+	if ver.LessThan(*minVer) {
+		return
+	}
+
+	supportedVer = true
+	return
+}
+
 func getMysqlServerContainerArgs(cluster *v1alpha1.Cluster) string {
 	args := []string{
 		"--server_id=$(expr $base + $index)",
@@ -199,6 +223,9 @@ func getMysqlServerContainerArgs(cluster *v1alpha1.Cluster) string {
 			"--ssl-ca=/etc/ssl/mysql/ca.crt",
 			"--ssl-cert=/etc/ssl/mysql/tls.crt",
 			"--ssl-key=/etc/ssl/mysql/tls.key")
+	}
+	if checkSupportGroupExitStateArgs(cluster.Spec.Version) {
+		args = append(args, "--loose-group-replication-exit-state-action=READ_ONLY")
 	}
 	return strings.Join(args, " ")
 }
