@@ -17,8 +17,13 @@ package manager
 import (
 	"context"
 	"fmt"
+	"os"
+	"reflect"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/oracle/mysql-operator/pkg/dr_replication"
 
 	"github.com/golang/glog"
 	"github.com/pkg/errors"
@@ -36,7 +41,10 @@ import (
 	"github.com/oracle/mysql-operator/pkg/util/mysqlsh"
 )
 
-const pollingIntervalSeconds = 15
+const (
+	pollingIntervalSeconds = 15
+	defaultDCReplChannel   = "ic_to_dr"
+)
 
 // ClusterManager manages the local MySQL instance's membership of an InnoDB cluster.
 type ClusterManager struct {
@@ -53,19 +61,25 @@ type ClusterManager struct {
 	localMySh mysqlsh.Interface
 
 	// Instance is the local instance of MySQL under management.
-	Instance *cluster.Instance
+	Instance cluster.Instance
 
 	// primaryCancelFunc cancels the execution of the primary-only controllers.
 	primaryCancelFunc    context.CancelFunc
 	podLabelerController *labeler.ClusterLabelerController
+
+	// ClusterDRHost is the host of dr/dc mysql router
+	clusterDRHost string
+	clusterDRPort int
 }
 
-// NewClusterManager creates a InnoDB cluster ClusterManager.
-func NewClusterManager(
+// newClusterManager creates a InnoDB cluster ClusterManager.
+func newClusterManager(
 	kubeClient kubernetes.Interface,
 	kubeInformerFactory kubeinformers.SharedInformerFactory,
 	mysqlshFactory func(string) mysqlsh.Interface,
-	instance *cluster.Instance,
+	instance cluster.Instance,
+	clusterDRHost string,
+	clusterDRPort int,
 ) *ClusterManager {
 	manager := &ClusterManager{
 		kubeClient:          kubeClient,
@@ -73,6 +87,8 @@ func NewClusterManager(
 		mysqlshFactory:      mysqlshFactory,
 		Instance:            instance,
 		localMySh:           mysqlshFactory(instance.GetShellURI()),
+		clusterDRHost:       clusterDRHost,
+		clusterDRPort:       clusterDRPort,
 	}
 	return manager
 }
@@ -85,11 +101,25 @@ func NewLocalClusterManger(kubeclient kubernetes.Interface, kubeInformerFactory 
 		return nil, errors.Wrap(err, "failed to get local MySQL instance")
 	}
 
-	return NewClusterManager(
+	host := os.Getenv("MYSQL_CLUSTER_DR_HOST")
+	fields := strings.Split(host, ":")
+	var clusterDRHost string
+	var clusterDRPort int
+	if len(fields) == 2 {
+		clusterDRHost = fields[0]
+		clusterDRPort, err = strconv.Atoi(fields[1])
+		if err != nil {
+			return nil, fmt.Errorf("wrong ClusterDRHost env")
+		}
+	}
+
+	return newClusterManager(
 		kubeclient,
 		kubeInformerFactory,
 		func(uri string) mysqlsh.Interface { return mysqlsh.New(utilexec.New(), uri) },
 		instance,
+		clusterDRHost,
+		clusterDRPort,
 	), nil
 }
 
@@ -97,10 +127,12 @@ func (m *ClusterManager) getClusterStatus(ctx context.Context) (*innodb.ClusterS
 	ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
 	defer cancel()
 	clusterStatus, localMSHErr := m.localMySh.GetClusterStatus(ctx)
+	glog.V(4).Infoln("GetClusterStatus, localMSHErr: ", localMSHErr)
 	if localMSHErr != nil {
 		var err error
 		clusterStatus, err = getClusterStatusFromGroupSeeds(ctx, m.kubeClient, m.Instance)
 		if err != nil {
+			glog.V(4).Infof("getClusterStatusFromGroupSeeds, err: %v, localErr: %v", err, localMSHErr)
 			// NOTE: We return the localMSHErr rather than the error here so that we
 			// can dispatch on it.
 			return nil, errors.Wrap(localMSHErr, "getting cluster status from group seeds")
@@ -123,13 +155,17 @@ func (m *ClusterManager) Sync(ctx context.Context) bool {
 	if err != nil {
 		myshErr, ok := errors.Cause(err).(*mysqlsh.Error)
 		if !ok {
+			glog.Errorf("err type: %v", reflect.TypeOf(err))
 			glog.Errorf("Failed to get the cluster status: %+v", err)
+			// can't get cluster status, need update agent-health-checking
+			cluster.SetStatus(nil)
 			return false
 		}
 
 		// We can't find a cluster. Bootstrap if we're the first member of the
 		// StatefulSet.
-		if m.Instance.Ordinal == 0 {
+		ordinal := m.Instance.Ordinal()
+		if ordinal == 0 {
 			clusterStatus, err = m.bootstrap(ctx, myshErr)
 			if err != nil {
 				glog.Errorf("Error bootstrapping cluster: %v", err)
@@ -197,13 +233,17 @@ func (m *ClusterManager) Sync(ctx context.Context) bool {
 
 	default:
 		metrics.IncStatusCounter(instanceStatusCount, innodb.InstanceStatusUnknown)
-		glog.Errorf("Received unrecognised cluster membership status: %q", instanceStatus)
+		glog.Errorf("Received unrecognised cluster membership status: %q, instance Name: %v",
+			instanceStatus, m.Instance.Name())
 	}
 
-	if online && !m.Instance.MultiMaster {
+	if online && !m.Instance.MultiMaster() {
 		m.ensurePrimaryControllerState(ctx, clusterStatus)
 	}
-
+	if !m.Instance.MultiMaster() {
+		// for dual DC
+		m.ensureClusterDRReplication(ctx, clusterStatus)
+	}
 	return online
 }
 
@@ -326,7 +366,7 @@ func (m *ClusterManager) createCluster(ctx context.Context) (*innodb.ClusterStat
 		"memberSslMode": "REQUIRED",
 		"ipWhitelist":   whitelistCIDR,
 	}
-	if m.Instance.MultiMaster {
+	if m.Instance.MultiMaster() {
 		opts["force"] = "True"
 		opts["multiMaster"] = "True"
 	}
@@ -350,6 +390,79 @@ func (m *ClusterManager) rebootFromOutage(ctx context.Context) (*innodb.ClusterS
 		return nil, errors.Wrap(err, "getting cluster status")
 	}
 	return status, nil
+}
+
+func (m *ClusterManager) needTurnOnDRReplication(status *innodb.ClusterStatus) (bool, error) {
+	// get info about innodb-cluster
+	primaryAddr, err := status.GetPrimaryAddr()
+	if err != nil {
+		return false, err
+	}
+	selfAddr := m.Instance.GetAddr()
+
+	if selfAddr == primaryAddr && m.clusterDRHost != "" && m.clusterDRPort != 0 {
+		return true, nil
+	}
+	return false, nil
+}
+
+func (m *ClusterManager) ensureClusterDRReplication(
+	ctx context.Context,
+	status *innodb.ClusterStatus,
+) error {
+	if m.Instance.MultiMaster() {
+		// only used in single-master mode
+		return fmt.Errorf("can't be called in multi-master mode")
+	}
+
+	needDRRepl, err := m.needTurnOnDRReplication(status)
+	if err != nil {
+		return err
+	}
+	replStatus, err := m.localMySh.GetDualDCReplicationStatus(ctx)
+	if err != nil {
+		glog.V(4).Infof("GetDualDCReplicationStatus fail: %v", err)
+		return err
+	}
+	// set dr replication status
+	drrepl.SetDRStatus(&drrepl.DRRepcliationStatus{
+		NeedDRRepl: needDRRepl,
+		Status:     replStatus.IsON(),
+		Reason:     replStatus,
+	})
+
+	if needDRRepl {
+		// if instance is primary and DR cluster exist, turn on slave replication
+		if replStatus.IsON() {
+			// if replication ON, return
+			glog.V(4).Infof("dc replication have turn on")
+			return nil
+		}
+		if replStatus.IsOFF() {
+			// if replication OFF, create channel
+			err = m.localMySh.CreateDCReplChannel(ctx,
+				m.clusterDRHost,
+				m.clusterDRPort,
+				m.Instance.GetPassword(),
+				defaultDCReplChannel,
+			)
+			if err != nil {
+				glog.V(4).Infof("StartDualDCReplication fail: %v", err)
+				return err
+			}
+		}
+		return m.localMySh.StartDualDCReplication(ctx, defaultDCReplChannel)
+	}
+	// else, turn off slave replication
+	if replStatus.IsOFF() {
+		glog.V(4).Infof("dc replication have turned off")
+		return nil
+	}
+	err = m.localMySh.StopDualDCReplication(ctx, defaultDCReplChannel)
+	if err != nil {
+		glog.V(4).Infof("StopDualDCReplication fail: %v", err)
+	}
+	return err
 }
 
 // Run runs the ClusterManager controller.

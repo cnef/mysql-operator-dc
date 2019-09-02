@@ -15,6 +15,8 @@
 package manager
 
 import (
+	"fmt"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,31 +28,69 @@ import (
 func TestGetReplicationGroupSeeds(t *testing.T) {
 	testCases := []struct {
 		seeds    string
-		pod      *cluster.Instance
+		pod      cluster.Instance
 		expected []string
 	}{
 		{
 			seeds:    "server-1-0:1234,server-1-1:1234",
-			pod:      cluster.NewInstance("", "", "server-1", 0, -1, false),
+			pod:      cluster.NewInstance("", "", "server-1", "", 0, -1, false, false),
 			expected: []string{"server-1-1:1234"},
 		}, {
 			seeds:    "server-1-1:1234,server-1-0:1234",
-			pod:      cluster.NewInstance("", "", "server-1", 0, -1, false),
+			pod:      cluster.NewInstance("", "", "server-1", "", 0, -1, false, false),
 			expected: []string{"server-1-1:1234"},
 		}, {
 			seeds:    "server-1-0:1234,server-1-1:1234",
-			pod:      cluster.NewInstance("", "", "server-2", 0, -1, false),
+			pod:      cluster.NewInstance("", "", "server-2", "", 0, -1, false, false),
 			expected: []string{"server-1-0:1234", "server-1-1:1234"},
 		}, {
 			seeds:    "server-1-0.server-1:1234,server-1-1.server-1:1234",
-			pod:      cluster.NewInstance("", "", "server-2", 0, -1, false),
+			pod:      cluster.NewInstance("", "", "server-2", "", 0, -1, false, false),
 			expected: []string{"server-1-0.server-1:1234", "server-1-1.server-1:1234"},
 		},
 	}
 
+	os.Setenv("MYSQL_CLUSTER_USE_HOST_NETWORK", "False")
 	for _, tt := range testCases {
 		t.Run(tt.seeds, func(t *testing.T) {
 			output, err := getReplicationGroupSeeds(tt.seeds, tt.pod)
+			fmt.Println(output, err)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, output)
+		})
+	}
+}
+
+func TestGetReplicationGroupSeedsInHostNetwork(t *testing.T) {
+	testCases := []struct {
+		seeds    string
+		pod      cluster.Instance
+		expected []string
+	}{
+		{
+			seeds:    "server-1-0:1234,server-1-1:1234",
+			pod:      cluster.NewInstance("", "", "", "server-1-0", 0, -1, false, true),
+			expected: []string{"server-1-1:1234"},
+		}, {
+			seeds:    "server-1-1:1234,server-1-0:1234",
+			pod:      cluster.NewInstance("", "", "", "server-1-0", 0, -1, false, true),
+			expected: []string{"server-1-1:1234"},
+		}, {
+			seeds:    "server-1-0:1234,server-1-1:1234",
+			pod:      cluster.NewInstance("", "", "", "server-1-2", 0, -1, false, true),
+			expected: []string{"server-1-0:1234", "server-1-1:1234"},
+		}, {
+			seeds:    "server-1-0.server-1:1234,server-1-1.server-1:1234",
+			pod:      cluster.NewInstance("", "", "", "server-1-1.server-2", 0, -1, false, true),
+			expected: []string{"server-1-0.server-1:1234", "server-1-1.server-1:1234"},
+		},
+	}
+
+	os.Setenv("MYSQL_CLUSTER_USE_HOST_NETWORK", "True")
+	for _, tt := range testCases {
+		t.Run(tt.seeds, func(t *testing.T) {
+			output, err := getReplicationGroupSeeds(tt.seeds, tt.pod)
+			fmt.Println(output, err)
 			require.NoError(t, err)
 			assert.Equal(t, tt.expected, output)
 		})

@@ -69,6 +69,23 @@ type ClusterSpec struct {
 	// and server key for group replication SSL.
 	// +optional
 	SSLSecret *corev1.LocalObjectReference `json:"sslSecret,omitempty"`
+	// ClusterDRHost allows deploy a mysql-cluster in Dual-DC
+	// if it is not set, we create a mysql-cluster in Single-DC
+	// +optional
+	ClusterDRHost string `json:"clusterDRHost,omitempty"`
+	// Privileged Mode for pod container, if true, we could use route to simulate network-partition
+	// +optional
+	Privileged bool `json:"privileged,omitempty"`
+	// HostNetwork allows pods to use host network
+	// +optional
+	HostNetwork bool `json:"hostNetwork,omitempty"`
+	// GRSeedsInHostNetwork stands for "group replication seeds in host-network"
+	// because we can't generate GROUP_REPLICATION_SEEDS like "mysql-cluster-0,mysql-cluster-1,..."
+	// which could be done in cluster-network.
+	// in host-network, maybe we want seeds like "infra-0,infra-2,infra-4" in k8s-cluster which have 5 nodes.
+	// so, need set seeds manually
+	// +optional
+	GRSeedsInHostNetwork string `json:"grSeedsInHostNetwork,omitempty"`
 	// SecurityContext holds Pod-level security attributes and common Container settings.
 	SecurityContext *corev1.PodSecurityContext `json:"securityContext,omitempty"`
 	// Tolerations allows specifying a list of tolerations for controlling which
