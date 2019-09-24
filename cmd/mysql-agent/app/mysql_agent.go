@@ -37,6 +37,7 @@ import (
 	backupcontroller "github.com/oracle/mysql-operator/pkg/controllers/backup"
 	clustermgr "github.com/oracle/mysql-operator/pkg/controllers/cluster/manager"
 	restorecontroller "github.com/oracle/mysql-operator/pkg/controllers/restore"
+	"github.com/oracle/mysql-operator/pkg/dr_replication"
 	clientset "github.com/oracle/mysql-operator/pkg/generated/clientset/versioned"
 	opscheme "github.com/oracle/mysql-operator/pkg/generated/clientset/versioned/scheme"
 	informers "github.com/oracle/mysql-operator/pkg/generated/informers/externalversions"
@@ -81,6 +82,14 @@ func Run(opts *agentopts.MySQLAgentOpts) error {
 	}
 	health := healthcheck.NewHandler()
 	health.AddReadinessCheck("node-in-cluster", checkInCluster)
+
+	// Set up DR-health-check
+	drChecker, err := drrepl.NewDRHealthCheck()
+	if err != nil {
+		glog.V(6).Infoln(err)
+	} else {
+		health.AddReadinessCheck("dr-in-cluster-master", drChecker)
+	}
 	go func() {
 		glog.Fatal(http.ListenAndServe(
 			net.JoinHostPort(opts.Address, strconv.Itoa(int(opts.HealthcheckPort))),
@@ -102,8 +111,8 @@ func Run(opts *agentopts.MySQLAgentOpts) error {
 	}
 
 	// Initialise the agent metrics.
-	metrics.RegisterPodName(opts.Hostname)
-	metrics.RegisterClusterName(manager.Instance.ClusterName)
+	metrics.RegisterPodName(manager.Instance.PodName())
+	metrics.RegisterClusterName(manager.Instance.ClusterName())
 	clustermgr.RegisterMetrics()
 	backupcontroller.RegisterMetrics()
 	restorecontroller.RegisterMetrics()

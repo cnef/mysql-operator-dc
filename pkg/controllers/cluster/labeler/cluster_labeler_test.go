@@ -31,13 +31,18 @@ import (
 	controllerutil "github.com/oracle/mysql-operator/pkg/controllers/util"
 )
 
+const (
+	clusterName = "test-cluster"
+	hostName    = "infra-ha"
+)
+
 func alwaysReady() bool { return true }
 
-func newLocalInstance(ordinal int) *cluster.Instance {
-	return cluster.NewInstance(metav1.NamespaceDefault, "test-cluster", "test-cluster", ordinal, 3306, false)
+func newLocalInstance(ordinal int, useHostNetwork bool) cluster.Instance {
+	return cluster.NewInstance(metav1.NamespaceDefault, clusterName, clusterName, hostName, ordinal, 3306, false, useHostNetwork)
 }
 
-func newFakeClusterLabelerController(instance *cluster.Instance, pods []corev1.Pod) (*fake.Clientset, *ClusterLabelerController) {
+func newFakeClusterLabelerController(instance cluster.Instance, pods []corev1.Pod) (*fake.Clientset, *ClusterLabelerController) {
 	client := fake.NewSimpleClientset(&corev1.PodList{Items: pods})
 	informerFactory := informers.NewSharedInformerFactory(client, controllerutil.NoResyncPeriodFunc())
 	podInformer := informerFactory.Core().V1().Pods()
@@ -131,7 +136,132 @@ func TestClusterLabelerLabelsPrimaryAndSecondaries(t *testing.T) {
 		},
 	}
 
-	client, controller := newFakeClusterLabelerController(newLocalInstance(0), pods)
+	client, controller := newFakeClusterLabelerController(newLocalInstance(0, false), pods)
+	controller.EnqueueClusterStatus(status.DeepCopy())
+	fakeWorker(controller)
+
+	actions := client.Actions()
+
+	if len(actions) != 3 {
+		t.Fatalf("Expected 3 actions but got %d: %+v", len(actions), actions)
+	}
+
+	// Check test-cluster-0 labeled as primary
+	pod, err := getPodFromPatchAction(actions[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, ok := pod.Labels[constants.LabelClusterRole]
+	if !ok || role != constants.ClusterRolePrimary {
+		t.Errorf("test-cluster-0 not labeled as primary labels=%+v", pod.Labels)
+	}
+
+	// Check test-cluster-1 labeled as secondary
+	pod, err = getPodFromPatchAction(actions[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, ok = pod.Labels[constants.LabelClusterRole]
+	if !ok || role != constants.ClusterRoleSecondary {
+		t.Errorf("test-cluster-1 not labeled as secondary labels=%+v", pod.Labels)
+	}
+
+	// Check test-cluster-2 labeled as secondary
+	pod, err = getPodFromPatchAction(actions[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, ok = pod.Labels[constants.LabelClusterRole]
+	if !ok || role != constants.ClusterRoleSecondary {
+		t.Errorf("test-cluster-1 not labeled as secondary labels=%+v", pod.Labels)
+	}
+}
+
+func TestClusterLabelerLabelsPrimaryAndSecondariesInHostnetwork(t *testing.T) {
+	pods := []corev1.Pod{
+		{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "v1",
+				Kind:       "Pod",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-cluster-0",
+				Namespace: metav1.NamespaceDefault,
+				Labels: map[string]string{
+					constants.ClusterLabel: "test-cluster",
+				},
+			},
+			Spec: corev1.PodSpec{
+				HostNetwork: true,
+				Hostname:    "infra-ha-0",
+			},
+		},
+		{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "v1",
+				Kind:       "Pod",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-cluster-1",
+				Namespace: metav1.NamespaceDefault,
+				Labels: map[string]string{
+					constants.ClusterLabel: "test-cluster",
+				},
+			},
+			Spec: corev1.PodSpec{
+				HostNetwork: true,
+				Hostname:    "infra-ha-1",
+			},
+		},
+		{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "v1",
+				Kind:       "Pod",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-cluster-2",
+				Namespace: metav1.NamespaceDefault,
+				Labels: map[string]string{
+					constants.ClusterLabel: "test-cluster",
+				},
+			},
+			Spec: corev1.PodSpec{
+				HostNetwork: true,
+				Hostname:    "infra-ha-2",
+			},
+		},
+	}
+	status := innodb.ClusterStatus{
+		ClusterName: "Cluster",
+		DefaultReplicaSet: innodb.ReplicaSet{
+			Name:       "default",
+			Primary:    "infra-ha-0:3306",
+			Status:     "OK",
+			StatusText: "Cluster is ONLINE and can tolerate up to ONE failure.",
+			Topology: map[string]*innodb.Instance{
+				"infra-ha-0:3306": {
+					Address: "infra-ha-0:3306",
+					Mode:    "R/W",
+					Role:    "HA",
+					Status:  innodb.InstanceStatusOnline,
+				},
+				"infra-ha-1:3306": {
+					Address: "infra-ha-1:3306",
+					Mode:    "R/O",
+					Role:    "HA",
+					Status:  innodb.InstanceStatusOnline,
+				},
+				"infra-ha-2:3306": {
+					Address: "infra-ha-2:3306",
+					Mode:    "R/O",
+					Role:    "HA",
+					Status:  innodb.InstanceStatusOnline,
+				},
+			},
+		},
+	}
+
+	client, controller := newFakeClusterLabelerController(newLocalInstance(0, true), pods)
 	controller.EnqueueClusterStatus(status.DeepCopy())
 	fakeWorker(controller)
 
@@ -247,7 +377,125 @@ func TestClusterLabelerRelabelsOldPrimary(t *testing.T) {
 		},
 	}
 
-	client, controller := newFakeClusterLabelerController(newLocalInstance(1), pods)
+	client, controller := newFakeClusterLabelerController(newLocalInstance(1, false), pods)
+	controller.EnqueueClusterStatus(status.DeepCopy())
+	fakeWorker(controller)
+
+	actions := client.Actions()
+
+	if len(actions) != 2 {
+		t.Fatalf("Expected 2 actions but got %d: %+v", len(actions), actions)
+	}
+
+	// Check test-cluster-0 labeled as secondary
+	pod, err := getPodFromPatchAction(actions[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, ok := pod.Labels[constants.LabelClusterRole]
+	if !ok || role != constants.ClusterRoleSecondary {
+		t.Errorf("test-cluster-0 not labeled as secondary labels=%+v", pod.Labels)
+	}
+
+	// Check test-cluster-1 labeled as primary
+	pod, err = getPodFromPatchAction(actions[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, ok = pod.Labels[constants.LabelClusterRole]
+	if !ok || role != constants.ClusterRolePrimary {
+		t.Errorf("test-cluster-1 not labeled as primary labels=%+v", pod.Labels)
+	}
+}
+
+func TestClusterLabelerRelabelsOldPrimaryInHostNetwork(t *testing.T) {
+	pods := []corev1.Pod{
+		{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "v1",
+				Kind:       "Pod",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-cluster-0",
+				Namespace: metav1.NamespaceDefault,
+				Labels: map[string]string{
+					constants.ClusterLabel:     "test-cluster",
+					constants.LabelClusterRole: constants.ClusterRolePrimary,
+				},
+			},
+			Spec: corev1.PodSpec{
+				HostNetwork: true,
+				Hostname:    "infra-ha-0",
+			},
+		},
+		{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "v1",
+				Kind:       "Pod",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-cluster-1",
+				Namespace: metav1.NamespaceDefault,
+				Labels: map[string]string{
+					constants.ClusterLabel:     "test-cluster",
+					constants.LabelClusterRole: constants.ClusterRoleSecondary,
+				},
+			},
+			Spec: corev1.PodSpec{
+				HostNetwork: true,
+				Hostname:    "infra-ha-1",
+			},
+		},
+		{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "v1",
+				Kind:       "Pod",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-cluster-2",
+				Namespace: metav1.NamespaceDefault,
+				Labels: map[string]string{
+					constants.ClusterLabel:     "test-cluster",
+					constants.LabelClusterRole: constants.ClusterRoleSecondary,
+				},
+			},
+			Spec: corev1.PodSpec{
+				HostNetwork: true,
+				Hostname:    "infra-ha-2",
+			},
+		},
+	}
+	status := innodb.ClusterStatus{
+		ClusterName: "Cluster",
+		DefaultReplicaSet: innodb.ReplicaSet{
+			Name:       "default",
+			Primary:    "infra-ha-1:3306",
+			Status:     "OK",
+			StatusText: "Cluster is ONLINE and can tolerate up to ONE failure.",
+			Topology: map[string]*innodb.Instance{
+				"infra-ha-0:3306": {
+					Address: "infra-ha-0:3306",
+					Mode:    "R/O",
+					Role:    "HA",
+					Status:  innodb.InstanceStatusOnline,
+				},
+				"infra-ha-1:3306": {
+					Address: "infra-ha-1:3306",
+					Mode:    "R/W",
+					Role:    "HA",
+					Status:  innodb.InstanceStatusOnline,
+				},
+				"infra-ha-2:3306": {
+					Address: "infra-ha-2:3306",
+					Mode:    "R/O",
+					Role:    "HA",
+					Status:  innodb.InstanceStatusOnline,
+				},
+			},
+		},
+	}
+
+	client, controller := newFakeClusterLabelerController(newLocalInstance(1, true), pods)
 	controller.EnqueueClusterStatus(status.DeepCopy())
 	fakeWorker(controller)
 
@@ -353,7 +601,105 @@ func TestClusterLabelerDoesntRelabelCorrectlyLabeledPods(t *testing.T) {
 		},
 	}
 
-	client, controller := newFakeClusterLabelerController(newLocalInstance(0), pods)
+	client, controller := newFakeClusterLabelerController(newLocalInstance(0, false), pods)
+	controller.EnqueueClusterStatus(status.DeepCopy())
+	fakeWorker(controller)
+
+	actions := client.Actions()
+
+	if len(actions) != 0 {
+		t.Fatalf("Expected 0 actions but got %d: %+v", len(actions), actions)
+	}
+}
+
+func TestClusterLabelerDoesntRelabelCorrectlyLabeledPodsInHostNetwork(t *testing.T) {
+	pods := []corev1.Pod{
+		{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "v1",
+				Kind:       "Pod",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-cluster-0",
+				Namespace: metav1.NamespaceDefault,
+				Labels: map[string]string{
+					constants.ClusterLabel:     "test-cluster",
+					constants.LabelClusterRole: constants.ClusterRolePrimary,
+				},
+			},
+			Spec: corev1.PodSpec{
+				HostNetwork: true,
+				Hostname:    "infra-ha-0",
+			},
+		},
+		{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "v1",
+				Kind:       "Pod",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-cluster-1",
+				Namespace: metav1.NamespaceDefault,
+				Labels: map[string]string{
+					constants.ClusterLabel:     "test-cluster",
+					constants.LabelClusterRole: constants.ClusterRoleSecondary,
+				},
+			},
+			Spec: corev1.PodSpec{
+				HostNetwork: true,
+				Hostname:    "infra-ha-1",
+			},
+		},
+		{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "v1",
+				Kind:       "Pod",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-cluster-2",
+				Namespace: metav1.NamespaceDefault,
+				Labels: map[string]string{
+					constants.ClusterLabel:     "test-cluster",
+					constants.LabelClusterRole: constants.ClusterRoleSecondary,
+				},
+			},
+			Spec: corev1.PodSpec{
+				HostNetwork: true,
+				Hostname:    "infra-ha-2",
+			},
+		},
+	}
+	status := innodb.ClusterStatus{
+		ClusterName: "Cluster",
+		DefaultReplicaSet: innodb.ReplicaSet{
+			Name:       "default",
+			Primary:    "infra-ha-0:3306",
+			Status:     "OK",
+			StatusText: "Cluster is ONLINE and can tolerate up to ONE failure.",
+			Topology: map[string]*innodb.Instance{
+				"infra-ha-0:3306": {
+					Address: "infra-ha-0:3306",
+					Mode:    "R/W",
+					Role:    "HA",
+					Status:  innodb.InstanceStatusOnline,
+				},
+				"infra-ha-1:3306": {
+					Address: "infra-ha-1:3306",
+					Mode:    "R/O",
+					Role:    "HA",
+					Status:  innodb.InstanceStatusOnline,
+				},
+				"infra-ha-2:3306": {
+					Address: "infra-ha-2:3306",
+					Mode:    "R/O",
+					Role:    "HA",
+					Status:  innodb.InstanceStatusOnline,
+				},
+			},
+		},
+	}
+
+	client, controller := newFakeClusterLabelerController(newLocalInstance(0, true), pods)
 	controller.EnqueueClusterStatus(status.DeepCopy())
 	fakeWorker(controller)
 
@@ -439,7 +785,115 @@ func TestClusterLabelerRemovesLabelFromInstanceInMissingState(t *testing.T) {
 		},
 	}
 
-	client, controller := newFakeClusterLabelerController(newLocalInstance(0), pods)
+	client, controller := newFakeClusterLabelerController(newLocalInstance(0, false), pods)
+	controller.EnqueueClusterStatus(status.DeepCopy())
+	fakeWorker(controller)
+
+	actions := client.Actions()
+
+	if len(actions) != 1 {
+		t.Fatalf("Expected 1 actions but got %d: %+v", len(actions), actions)
+	}
+
+	// Check label removed from test-cluster-2
+	pod, err := getPodFromPatchAction(actions[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, _ := pod.Labels[constants.LabelClusterRole]
+	if role != "" {
+		t.Errorf("label not removed from test-cluster-2 labels=%+v", pod.Labels)
+	}
+}
+
+func TestClusterLabelerRemovesLabelFromInstanceInMissingStateInHostNetwork(t *testing.T) {
+	pods := []corev1.Pod{
+		{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "v1",
+				Kind:       "Pod",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-cluster-0",
+				Namespace: metav1.NamespaceDefault,
+				Labels: map[string]string{
+					constants.ClusterLabel:     "test-cluster",
+					constants.LabelClusterRole: constants.ClusterRolePrimary,
+				},
+			},
+			Spec: corev1.PodSpec{
+				HostNetwork: true,
+				Hostname:    "infra-ha-0",
+			},
+		},
+		{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "v1",
+				Kind:       "Pod",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-cluster-1",
+				Namespace: metav1.NamespaceDefault,
+				Labels: map[string]string{
+					constants.ClusterLabel:     "test-cluster",
+					constants.LabelClusterRole: constants.ClusterRoleSecondary,
+				},
+			},
+			Spec: corev1.PodSpec{
+				HostNetwork: true,
+				Hostname:    "infra-ha-1",
+			},
+		},
+		{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "v1",
+				Kind:       "Pod",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-cluster-2",
+				Namespace: metav1.NamespaceDefault,
+				Labels: map[string]string{
+					constants.ClusterLabel:     "test-cluster",
+					constants.LabelClusterRole: constants.ClusterRoleSecondary,
+				},
+			},
+			Spec: corev1.PodSpec{
+				HostNetwork: true,
+				Hostname:    "infra-ha-2",
+			},
+		},
+	}
+	status := innodb.ClusterStatus{
+		ClusterName: "Cluster",
+		DefaultReplicaSet: innodb.ReplicaSet{
+			Name:       "default",
+			Primary:    "infra-ha-0:3306",
+			Status:     "OK",
+			StatusText: "Cluster is ONLINE and can tolerate up to ONE failure.",
+			Topology: map[string]*innodb.Instance{
+				"infra-ha-0:3306": {
+					Address: "infra-ha-0:3306",
+					Mode:    "R/W",
+					Role:    "HA",
+					Status:  innodb.InstanceStatusOnline,
+				},
+				"infra-ha-1:3306": {
+					Address: "infra-ha-1:3306",
+					Mode:    "R/O",
+					Role:    "HA",
+					Status:  innodb.InstanceStatusOnline,
+				},
+				"infra-ha-2:3306": {
+					Address: "infra-ha-2:3306",
+					Mode:    "R/O",
+					Role:    "HA",
+					Status:  innodb.InstanceStatusMissing,
+				},
+			},
+		},
+	}
+
+	client, controller := newFakeClusterLabelerController(newLocalInstance(0, true), pods)
 	controller.EnqueueClusterStatus(status.DeepCopy())
 	fakeWorker(controller)
 

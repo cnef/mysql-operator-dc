@@ -17,8 +17,10 @@ ifdef WERCKER
     VERSION ?= ${WERCKER_GIT_COMMIT}
     TENANT := "oracle"
 else
-    VERSION ?= ${USER}-$(shell git describe --always --dirty)
+    COMMIT := $(shell git rev-parse --short HEAD)
+    #VERSION ?= ${USER}-$(shell git describe --always --dirty)
     TENANT ?= "spinnaker"
+    VERSION := ${COMMIT}-$(shell date +%Y%m%d%H)
 endif
 
 PKG             := github.com/oracle/mysql-operator
@@ -102,6 +104,14 @@ lint:
 .PHONY: clean
 clean:
 	rm -rf .go bin
+
+SELF_REGISTRY := "10.5.6.10/mysql"
+.PHONY: image
+image:
+	@docker build --build-arg=http_proxy --build-arg=https_proxy -t ${SELF_REGISTRY}/mysql-operator:${VERSION} -f docker/mysql-operator/Dockerfile .
+	@docker build --build-arg=http_proxy --build-arg=https_proxy -t ${SELF_REGISTRY}/mysql-agent:${VERSION} -f docker/mysql-agent/Dockerfile .
+	@docker push ${SELF_REGISTRY}/mysql-operator:${VERSION}
+	@docker push ${SELF_REGISTRY}/mysql-agent:${VERSION}
 
 .PHONY: run-dev
 run-dev:

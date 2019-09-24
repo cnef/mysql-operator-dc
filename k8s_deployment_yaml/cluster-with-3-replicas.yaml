@@ -1,0 +1,38 @@
+---
+apiVersion: mysql.oracle.com/v1alpha1
+kind: Cluster
+metadata:
+  name: mysql-cluster 
+spec:
+  version: "8.0.11"
+  members: 3
+  baseServerId: 2000
+  config:
+    name: mycnf
+  # if use multi-master-mode, please uncomment it
+  # multiMaster: true
+  #
+  # deploy mysql-cluster onto specified node
+  # nodeSelector:
+  #   senseguard.sensetime.com/node-mysql: "True"
+  #
+  # if use host-network, please uncomment it
+  # hostNetwork: true
+  #
+  # if use host-network, please fill in right hostname:port
+  # grSeedsInHostNetwork: infra-sh-dr-0:13306,infra-sh-dr-1:13306,infra-sh-dr-2:13306
+  #
+  # if need DR, please set the clusterDRHost to the router-service-host
+  # clusterDRHost: 10.5.6.13:30446
+  rootPasswordSecret:
+    name: mysql-root-user-secret
+  volumeClaimTemplate:
+    metadata:
+      name: data
+    spec:
+      storageClassName: mysql-local-storage
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 10Gi

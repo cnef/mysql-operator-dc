@@ -1,0 +1,10 @@
+apiVersion: mysql.oracle.com/v1alpha1
+kind: Restore
+metadata:
+  name: restore-v2
+spec:
+  cluster:
+    name: mysql-cluster
+  backup:
+    # the name of backup 
+    name: mysql-backup-v2

@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
+	"github.com/golang/glog"
 	"github.com/oracle/mysql-operator/pkg/apis/mysql/v1alpha1"
 	"github.com/oracle/mysql-operator/pkg/constants"
 	agentopts "github.com/oracle/mysql-operator/pkg/options/agent"
@@ -127,6 +128,20 @@ func multiMasterEnvVar(enabled bool) v1.EnvVar {
 	}
 }
 
+func clusterDRHostEnvVar(host string) v1.EnvVar {
+	return v1.EnvVar{
+		Name:  "MYSQL_CLUSTER_DR_HOST",
+		Value: host,
+	}
+}
+
+func useHostNetworkEnvVar(enabled bool) v1.EnvVar {
+	return v1.EnvVar{
+		Name:  "MYSQL_CLUSTER_USE_HOST_NETWORK",
+		Value: strconv.FormatBool(enabled),
+	}
+}
+
 // Returns the MySQL_ROOT_PASSWORD environment variable
 // If a user specifies a secret in the spec we use that
 // else we create a secret with a random password
@@ -179,10 +194,7 @@ func checkSupportGroupExitStateArgs(deployingVersion string) (supportedVer bool)
 	return
 }
 
-// Builds the MySQL operator container for a cluster.
-// The 'mysqlImage' parameter is the image name of the mysql server to use with
-// no version information.. e.g. 'mysql/mysql-server'
-func mysqlServerContainer(cluster *v1alpha1.Cluster, mysqlServerImage string, rootPassword v1.EnvVar, members int, baseServerID uint32) v1.Container {
+func getMysqlServerContainerArgs(cluster *v1alpha1.Cluster) string {
 	args := []string{
 		"--server_id=$(expr $base + $index)",
 		"--datadir=/var/lib/mysql",
@@ -196,32 +208,62 @@ func mysqlServerContainer(cluster *v1alpha1.Cluster, mysqlServerImage string, ro
 		"--master-info-repository=TABLE",
 		"--relay-log-info-repository=TABLE",
 		"--transaction-write-set-extraction=XXHASH64",
-		fmt.Sprintf("--relay-log=%s-${index}-relay-bin", cluster.Name),
-		fmt.Sprintf("--report-host=\"%[1]s-${index}.%[1]s\"", cluster.Name),
 		"--log-error-verbosity=3",
+		fmt.Sprintf("--relay-log=%s-${index}-relay-bin", cluster.Name),
+		//"--loose-group-replication-communication-debug-options=GCS_DEBUG_ALL",
 	}
 
+	if cluster.Spec.HostNetwork {
+		args = append(args, "--report-host=\"${hostname}\"")
+	} else {
+		args = append(args, fmt.Sprintf("--report-host=\"%[1]s-${index}.%[1]s\"", cluster.Name))
+	}
 	if cluster.RequiresCustomSSLSetup() {
 		args = append(args,
 			"--ssl-ca=/etc/ssl/mysql/ca.crt",
 			"--ssl-cert=/etc/ssl/mysql/tls.crt",
 			"--ssl-key=/etc/ssl/mysql/tls.key")
 	}
-
 	if checkSupportGroupExitStateArgs(cluster.Spec.Version) {
 		args = append(args, "--loose-group-replication-exit-state-action=READ_ONLY")
 	}
+	return strings.Join(args, " ")
+}
 
-	entryPointArgs := strings.Join(args, " ")
-
-	cmd := fmt.Sprintf(`
+func getMysqlServerContainerCmd(cluster *v1alpha1.Cluster, baseServerID uint32, args string) string {
+	if cluster.Spec.HostNetwork {
+		return fmt.Sprintf(`
          # Set baseServerID
-         base=%d
+		 base=%d
+		 hostname=$(cat /etc/hostname)
+
+         # Finds the replica index from the hostname, and uses this to define
+         # a unique server id for this instance.
+         index=$(echo ${MY_POD_NAME} | grep -o '[^-]*$')
+         /entrypoint.sh %s`, baseServerID, args)
+	}
+	return fmt.Sprintf(`
+         # Set baseServerID
+		 base=%d
 
          # Finds the replica index from the hostname, and uses this to define
          # a unique server id for this instance.
          index=$(cat /etc/hostname | grep -o '[^-]*$')
-         /entrypoint.sh %s`, baseServerID, entryPointArgs)
+         /entrypoint.sh %s`, baseServerID, args)
+}
+
+// Builds the MySQL operator container for a cluster.
+// The 'mysqlImage' parameter is the image name of the mysql server to use with
+// no version information.. e.g. 'mysql/mysql-server'
+func mysqlServerContainer(cluster *v1alpha1.Cluster, mysqlServerImage string, rootPassword v1.EnvVar, members int, baseServerID uint32) v1.Container {
+	entryPointArgs := getMysqlServerContainerArgs(cluster)
+
+	cmd := getMysqlServerContainerCmd(cluster, baseServerID, entryPointArgs)
+
+	privileged := false
+	if cluster.Spec.Privileged {
+		privileged = true
+	}
 
 	var resourceLimits corev1.ResourceRequirements
 	if cluster.Spec.Resources != nil && cluster.Spec.Resources.Server != nil {
@@ -249,6 +291,18 @@ func mysqlServerContainer(cluster *v1alpha1.Cluster, mysqlServerImage string, ro
 				Name:  "MYSQL_LOG_CONSOLE",
 				Value: "true",
 			},
+			{
+				Name: "MY_POD_NAME",
+				ValueFrom: &v1.EnvVarSource{
+					FieldRef: &v1.ObjectFieldSelector{
+						FieldPath: "metadata.name",
+					},
+				},
+			},
+		},
+		// enable privilege to use route debug network-partition
+		SecurityContext: &v1.SecurityContext{
+			Privileged: &privileged,
 		},
 		Resources: resourceLimits,
 	}
@@ -260,7 +314,13 @@ func mysqlAgentContainer(cluster *v1alpha1.Cluster, mysqlAgentImage string, root
 		agentVersion = version
 	}
 
-	replicationGroupSeeds := getReplicationGroupSeeds(cluster.Name, members)
+	var replicationGroupSeeds string
+
+	if cluster.Spec.HostNetwork {
+		replicationGroupSeeds = cluster.Spec.GRSeedsInHostNetwork
+	} else {
+		replicationGroupSeeds = getReplicationGroupSeeds(cluster.Name, members)
+	}
 
 	var resourceLimits corev1.ResourceRequirements
 	if cluster.Spec.Resources != nil && cluster.Spec.Resources.Agent != nil {
@@ -270,19 +330,29 @@ func mysqlAgentContainer(cluster *v1alpha1.Cluster, mysqlAgentImage string, root
 	return v1.Container{
 		Name:         MySQLAgentName,
 		Image:        fmt.Sprintf("%s:%s", mysqlAgentImage, agentVersion),
-		Args:         []string{"--v=4"},
+		Args:         []string{"--v=6"},
 		VolumeMounts: volumeMounts(cluster),
 		Env: []v1.EnvVar{
 			clusterNameEnvVar(cluster),
 			namespaceEnvVar(),
 			replicationGroupSeedsEnvVar(replicationGroupSeeds),
 			multiMasterEnvVar(cluster.Spec.MultiMaster),
+			clusterDRHostEnvVar(cluster.Spec.ClusterDRHost),
+			useHostNetworkEnvVar(cluster.Spec.HostNetwork),
 			rootPassword,
 			{
 				Name: "MY_POD_IP",
 				ValueFrom: &v1.EnvVarSource{
 					FieldRef: &v1.ObjectFieldSelector{
 						FieldPath: "status.podIP",
+					},
+				},
+			},
+			{
+				Name: "MY_POD_NAME",
+				ValueFrom: &v1.EnvVarSource{
+					FieldRef: &v1.ObjectFieldSelector{
+						FieldPath: "metadata.name",
 					},
 				},
 			},
@@ -383,6 +453,13 @@ func NewForCluster(cluster *v1alpha1.Cluster, images operatoropts.Images, servic
 		podLabels[constants.LabelClusterRole] = constants.ClusterRolePrimary
 	}
 
+	dnsPolicy := v1.DNSClusterFirst
+	if cluster.Spec.HostNetwork {
+		dnsPolicy = v1.DNSClusterFirstWithHostNet
+	}
+	glog.V(4).Infof("create statefulset, hostnetwork: %v, dnspolicy: %v",
+		cluster.Spec.HostNetwork,
+		dnsPolicy)
 	ss := &apps.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: cluster.Namespace,
@@ -418,6 +495,8 @@ func NewForCluster(cluster *v1alpha1.Cluster, images operatoropts.Images, servic
 					Affinity:           cluster.Spec.Affinity,
 					Containers:         containers,
 					Volumes:            podVolumes,
+					HostNetwork:        cluster.Spec.HostNetwork,
+					DNSPolicy:          dnsPolicy,
 				},
 			},
 			UpdateStrategy: apps.StatefulSetUpdateStrategy{
